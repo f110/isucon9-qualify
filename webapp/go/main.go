@@ -760,7 +760,7 @@ func getNewCategoryItems(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	items := []Item{}
+	items := make([]Item, 0)
 	err = dbx.Select(&items, inQuery, inArgs...)
 
 	if err != nil {
@@ -769,13 +769,38 @@ func getNewCategoryItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	itemSimples := []ItemSimple{}
+	userIds := make([]int64, 0)
 	for _, item := range items {
-		seller, err := getUserSimpleByID(dbx, item.SellerID)
-		if err != nil {
-			outputErrorMsg(w, http.StatusNotFound, "seller not found")
-			return
+		userIds = append(userIds, item.SellerID)
+	}
+	inQuery, args, err := sqlx.In(
+		"SELECT * FROM `users` WHERE `id` IN (?)",
+		userIds,
+	)
+	if err != nil {
+		log.Print(err)
+		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	users := make([]*User, 0)
+	err = dbx.Select(&users, inQuery, args...)
+	if err != nil {
+		log.Print(err)
+		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	userMap := make(map[int64]*UserSimple)
+	for _, user := range users {
+		userMap[user.ID] = &UserSimple{
+			ID:           user.ID,
+			AccountName:  user.AccountName,
+			NumSellItems: user.NumSellItems,
 		}
+	}
+
+	itemSimples := make([]ItemSimple, 0)
+	for _, item := range items {
+		seller := userMap[item.SellerID]
 		category, err := getCategoryByID(item.CategoryID)
 		if err != nil {
 			outputErrorMsg(w, http.StatusNotFound, "category not found")
@@ -784,7 +809,7 @@ func getNewCategoryItems(w http.ResponseWriter, r *http.Request) {
 		itemSimples = append(itemSimples, ItemSimple{
 			ID:         item.ID,
 			SellerID:   item.SellerID,
-			Seller:     &seller,
+			Seller:     seller,
 			Status:     item.Status,
 			Name:       item.Name,
 			Price:      item.Price,
