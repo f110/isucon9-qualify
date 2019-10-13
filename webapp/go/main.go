@@ -19,7 +19,6 @@ import (
 	"runtime/pprof"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -975,11 +974,10 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	tx := dbx.MustBegin()
 	items := make([]Item, 0)
 	if itemID > 0 && createdAt > 0 {
 		// paging
-		err := tx.Select(&items,
+		err := dbx.Select(&items,
 			"SELECT * FROM `items` WHERE (`seller_id` = ? OR `buyer_id` = ?) AND `status` IN (?,?,?,?,?) AND (`created_at` < ?  OR (`created_at` <= ? AND `id` < ?)) ORDER BY `created_at` DESC, `id` DESC LIMIT ?",
 			user.ID,
 			user.ID,
@@ -996,12 +994,11 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Print(err)
 			outputErrorMsg(w, http.StatusInternalServerError, "db error")
-			tx.Rollback()
 			return
 		}
 	} else {
 		// 1st page
-		err := tx.Select(&items,
+		err := dbx.Select(&items,
 			"SELECT * FROM `items` WHERE (`seller_id` = ? OR `buyer_id` = ?) AND `status` IN (?,?,?,?,?) ORDER BY `created_at` DESC, `id` DESC LIMIT ?",
 			user.ID,
 			user.ID,
@@ -1015,7 +1012,6 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Print(err)
 			outputErrorMsg(w, http.StatusInternalServerError, "db error")
-			tx.Rollback()
 			return
 		}
 	}
@@ -1038,20 +1034,22 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 			transactionEvidenceIds[item.ID] = struct{}{}
 		}
 	}
-	q := make([]string, len(userIdsForSelect))
-	for i := 0; i < len(q); i++ {
-		q[i] = "?"
-	}
 	userMap := make(map[int64]*UserSimple)
 	users := make([]*User, 0)
-	err = tx.Select(
-		&users,
-		"SELECT * FROM `users` WHERE `id` IN ("+strings.Join(q, ",")+")",
-		userIdsForSelect...,
+	inQuery, args, err := sqlx.In(
+		"SELECT * FROM `users` WHERE `id` IN (?)",
+		userIdsForSelect,
 	)
 	if err != nil {
 		log.Print(err)
 	}
+	err = dbx.Select(&users, inQuery, args...)
+	if err != nil {
+		log.Print(err)
+		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
 	for _, v := range users {
 		userMap[v.ID] = &UserSimple{
 			ID:           v.ID,
@@ -1060,41 +1058,43 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	q = make([]string, len(transactionEvidenceIdsForSelect))
-	for i := 0; i < len(q); i++ {
-		q[i] = "?"
-	}
 	transactionEvidences := make([]*TransactionEvidence, 0)
-	err = tx.Select(
-		&transactionEvidences,
-		"SELECT * FROM `transaction_evidences` WHERE `item_id` IN ("+strings.Join(q, ",")+")",
-		transactionEvidenceIdsForSelect...,
+	inQuery, args, err = sqlx.In(
+		"SELECT * FROM `transaction_evidences` WHERE `item_id` IN (?)",
+		transactionEvidenceIdsForSelect,
 	)
 	if err != nil {
 		log.Print(err)
+	}
+	err = dbx.Select(&transactionEvidences, inQuery, args...)
+	if err != nil {
+		log.Print(err)
+		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		return
 	}
 	evidenceMap := make(map[int64]*TransactionEvidence)
 	for _, v := range transactionEvidences {
 		evidenceMap[v.ItemID] = v
 	}
 
-	teIds := make([]interface{}, 0)
+	teIds := make([]int64, 0)
 	for _, te := range transactionEvidences {
 		teIds = append(teIds, te.ID)
 	}
-	q = make([]string, len(transactionEvidences))
-	for i := 0; i < len(q); i++ {
-		q[i] = "?"
-	}
 	shippings := make([]*Shipping, 0)
-	if len(q) > 0 {
-		err = tx.Select(
-			&shippings,
-			"SELECT * FROM `shippings` WHERE `transaction_evidence_id` IN ("+strings.Join(q, ",")+")",
-			teIds...,
+	if len(teIds) > 0 {
+		inQuery, args, err = sqlx.In(
+			"SELECT * FROM `shippings` WHERE `transaction_evidence_id` IN (?)",
+			teIds,
 		)
 		if err != nil {
 			log.Print(err)
+		}
+		err = dbx.Select(&shippings, inQuery, args...)
+		if err != nil {
+			log.Print(err)
+			outputErrorMsg(w, http.StatusInternalServerError, "db error")
+			return
 		}
 	}
 	shippingMap := make(map[int64]*Shipping)
@@ -1128,7 +1128,6 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		category, err := getCategoryByID(item.CategoryID)
 		if err != nil {
 			outputErrorMsg(w, http.StatusNotFound, "category not found")
-			tx.Rollback()
 			return
 		}
 
@@ -1172,7 +1171,6 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 
 		itemDetails = append(itemDetails, itemDetail)
 	}
-	tx.Commit()
 
 	hasNext := false
 	if len(itemDetails) > TransactionsPerPage {
@@ -1335,7 +1333,7 @@ func postItemEdit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tx := dbx.MustBegin()
-	err = tx.Get(&targetItem, "SELECT * FROM `items` WHERE `id` = ? FOR UPDATE", itemID)
+	err = tx.Get(&targetItem, "SELECT * FROM `items` WHERE `id` = ?", itemID)
 	if err != nil {
 		log.Print(err)
 
@@ -1460,54 +1458,39 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx := dbx.MustBegin()
-
 	targetItem := Item{}
-	ctx, cancelFunc := context.WithDeadline(r.Context(), time.Now().Add(50*time.Millisecond))
-	defer cancelFunc()
-	err = tx.GetContext(ctx, &targetItem, "SELECT * FROM `items` WHERE `id` = ? FOR UPDATE", rb.ItemID)
-	if ctx.Err() == context.DeadlineExceeded {
-		outputErrorMsg(w, http.StatusForbidden, "item is not for sale")
-		tx.Rollback()
-		return
-	}
+	err = dbx.Get(&targetItem, "SELECT * FROM `items` WHERE `id` = ?", rb.ItemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "item not found")
-		tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
 		return
 	}
 
 	if targetItem.Status != ItemStatusOnSale {
 		outputErrorMsg(w, http.StatusForbidden, "item is not for sale")
-		tx.Rollback()
 		return
 	}
 
 	if targetItem.SellerID == buyer.ID {
 		outputErrorMsg(w, http.StatusForbidden, "自分の商品は買えません")
-		tx.Rollback()
 		return
 	}
 
 	seller := User{}
-	err = tx.Get(&seller, "SELECT * FROM `users` WHERE `id` = ?", targetItem.SellerID)
+	err = dbx.Get(&seller, "SELECT * FROM `users` WHERE `id` = ?", targetItem.SellerID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "seller not found")
-		tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
 		return
 	}
 
@@ -1516,25 +1499,24 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "category id error")
-		tx.Rollback()
 		return
 	}
 
-	result, err := tx.Exec("INSERT INTO `transaction_evidences` (`seller_id`, `buyer_id`, `status`, `item_id`, `item_name`, `item_price`, `item_description`,`item_category_id`,`item_root_category_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+	tx := dbx.MustBegin()
+	result, err := tx.Exec("INSERT INTO `transaction_evidences` (`seller_id`, `buyer_id`, `status`, `item_id`, `item_name`, `item_price`, `item_category_id`,`item_root_category_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 		targetItem.SellerID,
 		buyer.ID,
 		TransactionEvidenceStatusWaitShipping,
 		targetItem.ID,
 		targetItem.Name,
 		targetItem.Price,
-		targetItem.Description,
 		category.ID,
 		category.ParentID,
 	)
 	if err != nil {
 		log.Print(err)
 
-		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		outputErrorMsg(w, http.StatusForbidden, "db error")
 		tx.Rollback()
 		return
 	}
@@ -1548,11 +1530,12 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = tx.Exec("UPDATE `items` SET `buyer_id` = ?, `status` = ?, `updated_at` = ? WHERE `id` = ?",
+	_, err = tx.Exec("UPDATE `items` SET `buyer_id` = ?, `status` = ?, `updated_at` = ? WHERE `id` = ? AND `status` = ?",
 		buyer.ID,
 		ItemStatusTrading,
 		time.Now(),
 		targetItem.ID,
+		ItemStatusOnSale,
 	)
 	if err != nil {
 		log.Print(err)
@@ -1563,6 +1546,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 	}
 	tx.Commit()
 
+	rollbacked := 0
 	rollback := func() {
 		tx := dbx.MustBegin()
 		_, err := tx.Exec("UPDATE `items` SET `buyer_id` = ?, `status` = ?, `updated_at` = ? WHERE `id` = ? AND `status` = ?",
@@ -1587,6 +1571,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+
 		v, err := APIShipmentCreate(getShipmentServiceURL(), &APIShipmentCreateReq{
 			ToAddress:   buyer.Address,
 			ToName:      buyer.AccountName,
@@ -1596,6 +1581,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Print(err)
 			rollback()
+			rollbacked = http.StatusInternalServerError
 			outputErrorMsg(w, http.StatusInternalServerError, "failed to request to shipment service")
 
 			return
@@ -1606,6 +1592,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+
 		pstr, err := APIPaymentToken(getPaymentServiceURL(), &APIPaymentServiceTokenReq{
 			ShopID: PaymentServiceIsucariShopID,
 			Token:  rb.Token,
@@ -1616,34 +1603,38 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 			log.Print(err)
 
 			rollback()
+			rollbacked = http.StatusInternalServerError
 			outputErrorMsg(w, http.StatusInternalServerError, "payment service is failed")
 			return
 		}
 
 		if pstr.Status == "invalid" {
-			log.Print("FUCK1")
 			rollback()
+			rollbacked = http.StatusBadRequest
 			outputErrorMsg(w, http.StatusBadRequest, "カード情報に誤りがあります")
-			//tx.Rollback()
 			return
 		}
 
 		if pstr.Status == "fail" {
-			log.Print("FUCK2")
 			rollback()
+			rollbacked = http.StatusBadRequest
 			outputErrorMsg(w, http.StatusBadRequest, "カードの残高が足りません")
-			//tx.Rollback()
 			return
 		}
 
 		if pstr.Status != "ok" {
-			log.Print("FUCK4")
+			rollback()
+			rollbacked = http.StatusBadRequest
 			outputErrorMsg(w, http.StatusBadRequest, "想定外のエラー")
-			//tx.Rollback()
 			return
 		}
 	}()
 	wg.Wait()
+
+	if rollbacked != 0 {
+		outputErrorMsg(w, rollbacked, "something occurred")
+		return
+	}
 
 	_, err = dbx.Exec("INSERT INTO `shippings` (`transaction_evidence_id`, `status`, `item_name`, `item_id`, `reserve_id`, `reserve_time`, `to_address`, `to_name`, `from_address`, `from_name`, `img_binary`) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
 		transactionEvidenceID,
@@ -2158,7 +2149,7 @@ func postSell(w http.ResponseWriter, r *http.Request) {
 	tx := dbx.MustBegin()
 
 	seller := User{}
-	err = tx.Get(&seller, "SELECT * FROM `users` WHERE `id` = ? FOR UPDATE", user.ID)
+	err = tx.Get(&seller, "SELECT * FROM `users` WHERE `id` = ?", user.ID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "user not found")
 		tx.Rollback()
@@ -2196,8 +2187,7 @@ func postSell(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
-	_, err = tx.Exec("UPDATE `users` SET `num_sell_items`=?, `last_bump`=? WHERE `id`=?",
-		seller.NumSellItems+1,
+	_, err = tx.Exec("UPDATE `users` SET `num_sell_items` = `num_sell_items` + 1, `last_bump` = ? WHERE `id` = ?",
 		now,
 		seller.ID,
 	)
@@ -2243,39 +2233,32 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx := dbx.MustBegin()
-
 	targetItem := Item{}
-	err = tx.Get(&targetItem, "SELECT * FROM `items` WHERE `id` = ? FOR UPDATE", itemID)
+	err = dbx.Get(&targetItem, "SELECT * FROM `items` WHERE `id` = ?", itemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "item not found")
-		tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
 		return
 	}
 
 	if targetItem.SellerID != user.ID {
 		outputErrorMsg(w, http.StatusForbidden, "自分の商品以外は編集できません")
-		tx.Rollback()
 		return
 	}
 
 	seller := User{}
-	err = tx.Get(&seller, "SELECT * FROM `users` WHERE `id` = ? FOR UPDATE", user.ID)
+	err = dbx.Get(&seller, "SELECT * FROM `users` WHERE `id` = ?", user.ID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "user not found")
-		tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
 		return
 	}
 
@@ -2283,11 +2266,11 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 	// last_bump + 3s > now
 	if seller.LastBump.Add(BumpChargeSeconds).After(now) {
 		outputErrorMsg(w, http.StatusForbidden, "Bump not allowed")
-		tx.Rollback()
 		return
 	}
 
-	_, err = tx.Exec("UPDATE `items` SET `created_at`=?, `updated_at`=? WHERE id=?",
+	tx := dbx.MustBegin()
+	_, err = tx.Exec("UPDATE `items` SET `created_at` = ?, `updated_at` = ? WHERE id = ?",
 		now,
 		now,
 		targetItem.ID,
@@ -2298,7 +2281,7 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = tx.Exec("UPDATE `users` SET `last_bump`=? WHERE id=?",
+	_, err = tx.Exec("UPDATE `users` SET `last_bump` = ? WHERE id = ?",
 		now,
 		seller.ID,
 	)
@@ -2308,22 +2291,14 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = tx.Get(&targetItem, "SELECT * FROM `items` WHERE `id` = ?", itemID)
-	if err != nil {
-		log.Print(err)
-		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
-		return
-	}
-
 	tx.Commit()
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	json.NewEncoder(w).Encode(&resItemEdit{
 		ItemID:        targetItem.ID,
 		ItemPrice:     targetItem.Price,
-		ItemCreatedAt: targetItem.CreatedAt.Unix(),
-		ItemUpdatedAt: targetItem.UpdatedAt.Unix(),
+		ItemCreatedAt: now.Unix(),
+		ItemUpdatedAt: now.Unix(),
 	})
 }
 

@@ -53,7 +53,7 @@ type APIShipmentStatusReq struct {
 func init() {
 	transport := http.DefaultTransport.(*http.Transport)
 	transport.MaxIdleConns = 0
-	transport.MaxIdleConnsPerHost = 1000
+	transport.MaxIdleConnsPerHost = 10000
 }
 
 func APIPaymentToken(paymentURL string, param *APIPaymentServiceTokenReq) (*APIPaymentServiceTokenRes, error) {
