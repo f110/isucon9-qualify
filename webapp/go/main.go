@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"html/template"
 	"io/ioutil"
@@ -13,11 +14,14 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -315,29 +319,36 @@ func requestLogging(f http.HandlerFunc) func(w http.ResponseWriter, req *http.Re
 }
 
 func main() {
-	host := os.Getenv("MYSQL_HOST")
-	if host == "" {
-		host = "127.0.0.1"
-	}
-	port := os.Getenv("MYSQL_PORT")
-	if port == "" {
-		port = "3306"
-	}
+	host := "127.0.0.1"
+	port := "3306"
+	user := "isucari"
+	password := "isucari"
+	dbname := "isucari"
+	cpuprofile := ""
+	flag.StringVar(&host, "mysql-host", host, "mysql host")
+	flag.StringVar(&port, "mysql-port", port, "mysql port")
+	flag.StringVar(&user, "mysql-user", user, "mysql user")
+	flag.StringVar(&password, "mysql-password", password, "mysql password")
+	flag.StringVar(&dbname, "mysql-db", dbname, "database name")
+	flag.StringVar(&cpuprofile, "cpuprofile", cpuprofile, "enable cpuprofile")
+	flag.Parse()
+
 	_, err := strconv.Atoi(port)
 	if err != nil {
 		log.Fatalf("failed to read DB port number from an environment variable MYSQL_PORT.\nError: %s", err.Error())
 	}
-	user := os.Getenv("MYSQL_USER")
-	if user == "" {
-		user = "isucari"
-	}
-	dbname := os.Getenv("MYSQL_DBNAME")
-	if dbname == "" {
-		dbname = "isucari"
-	}
-	password := os.Getenv("MYSQL_PASS")
-	if password == "" {
-		password = "isucari"
+
+	if cpuprofile != "" {
+		f, err := os.Create(cpuprofile)
+		if err != nil {
+			log.Fatal("could not create CPU profile: ", err)
+		}
+		defer f.Close()
+		log.Printf("Enable CPU Profile: %s", f.Name())
+		if err := pprof.StartCPUProfile(f); err != nil {
+			log.Fatal("could not start CPU profile: ", err)
+		}
+		defer pprof.StopCPUProfile()
 	}
 
 	dsn := fmt.Sprintf(
@@ -392,7 +403,49 @@ func main() {
 	mux.HandleFunc(pat.Get("/users/setting"), requestLogging(getIndex))
 	// Assets
 	mux.Handle(pat.Get("/*"), http.FileServer(http.Dir("../public")))
-	log.Fatal(http.ListenAndServe(":8000", mux))
+
+	notifyCh := make(chan os.Signal)
+	signal.Notify(notifyCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
+	go signalHandler(notifyCh, cancelFunc)
+
+	s := &http.Server{
+		Addr:    ":8000",
+		Handler: mux,
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		s.ListenAndServe()
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		<-ctx.Done()
+		log.Print("going to shutdown")
+		ctx, cancelFunc := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelFunc()
+		if err := s.Shutdown(ctx); err != nil {
+			log.Fatal(err)
+		}
+	}()
+	wg.Wait()
+}
+
+func signalHandler(ch chan os.Signal, cancelFunc context.CancelFunc) {
+	for {
+		select {
+		case <-ch:
+			cancelFunc()
+			return
+		}
+	}
 }
 
 func getSession(r *http.Request) *sessions.Session {
@@ -1272,10 +1325,11 @@ func postItemEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = tx.Exec("UPDATE `items` SET `price` = ?, `updated_at` = ? WHERE `id` = ?",
+	_, err = tx.Exec("UPDATE `items` SET `price` = ?, `updated_at` = ? WHERE `id` = ? AND `price` = ?",
 		price,
 		time.Now(),
 		itemID,
+		targetItem.Price,
 	)
 	if err != nil {
 		log.Print(err)
