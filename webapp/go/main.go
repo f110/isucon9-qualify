@@ -1545,9 +1545,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		category.ParentID,
 	)
 	if err != nil {
-		log.Print(err)
-
-		outputErrorMsg(w, http.StatusForbidden, "db error")
+		outputErrorMsg(w, http.StatusForbidden, "already bought by other user")
 		tx.Rollback()
 		return
 	}
