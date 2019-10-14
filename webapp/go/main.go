@@ -23,12 +23,13 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
 	goji "goji.io"
 	"goji.io/pat"
-	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -573,6 +574,17 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	if err := os.RemoveAll("../public/qr"); err != nil {
+		log.Print(err)
+		outputErrorMsg(w, http.StatusInternalServerError, "failed remove qrcode dir")
+		return
+	}
+	if err := os.MkdirAll("../public/qr", 0755); err != nil {
+		log.Print(err)
+		outputErrorMsg(w, http.StatusInternalServerError, "failed create qrcode dir")
 		return
 	}
 
@@ -1449,13 +1461,14 @@ func getQRCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(shipping.ImgBinary) == 0 {
-		outputErrorMsg(w, http.StatusInternalServerError, "empty qrcode image")
+	b, err := ioutil.ReadFile("../public/qr/" + strconv.Itoa(int(transactionEvidence.ID)) + ".png")
+	if err != nil {
+		outputErrorMsg(w, http.StatusInternalServerError, "qrcode not found")
 		return
 	}
 
 	w.Header().Set("Content-Type", "image/png")
-	w.Write(shipping.ImgBinary)
+	w.Write(b)
 }
 
 func postBuy(w http.ResponseWriter, r *http.Request) {
@@ -1657,7 +1670,8 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = dbx.Exec("INSERT INTO `shippings` (`transaction_evidence_id`, `status`, `item_name`, `item_id`, `reserve_id`, `reserve_time`, `to_address`, `to_name`, `from_address`, `from_name`, `img_binary`) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+	_, err = dbx.Exec(
+		"INSERT INTO `shippings` (`transaction_evidence_id`, `status`, `item_name`, `item_id`, `reserve_id`, `reserve_time`, `to_address`, `to_name`, `from_address`, `from_name`, `img_binary`) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
 		transactionEvidenceID,
 		ShippingsStatusInitial,
 		targetItem.Name,
@@ -1778,11 +1792,15 @@ func postShip(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
+	if err := ioutil.WriteFile("../public/qr/"+strconv.Itoa(int(transactionEvidence.ID))+".png", img, 0644); err != nil {
+		log.Print(err)
+		outputErrorMsg(w, http.StatusInternalServerError, "faild save an image of qr code")
+		return
+	}
 
 	tx := dbx.MustBegin()
-	_, err = tx.Exec("UPDATE `shippings` SET `status` = ?, `img_binary` = ?, `updated_at` = ? WHERE `transaction_evidence_id` = ?",
+	_, err = tx.Exec("UPDATE `shippings` SET `status` = ?, `updated_at` = ? WHERE `transaction_evidence_id` = ?",
 		ShippingsStatusWaitPickup,
-		img,
 		time.Now(),
 		transactionEvidence.ID,
 	)
@@ -2336,14 +2354,6 @@ func getSettings(w http.ResponseWriter, r *http.Request) {
 
 	ress.PaymentServiceURL = getPaymentServiceURL()
 
-	categories := []Category{}
-
-	err := dbx.Select(&categories, "SELECT * FROM `categories`")
-	if err != nil {
-		log.Print(err)
-		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		return
-	}
 	ress.Categories = categories
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
@@ -2433,9 +2443,9 @@ func postRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := dbx.Exec("INSERT INTO `users` (`account_name`, `hashed_password`, `address`) VALUES (?, ?, ?)",
+	result, err := dbx.Exec("INSERT INTO `users` (`account_name`, `hashed_password`, address`) VALUES (?, ?, ?)",
 		accountName,
-		hashedPassword,
+		hashedPassword[:],
 		address,
 	)
 	if err != nil {
