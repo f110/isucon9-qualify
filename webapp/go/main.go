@@ -77,6 +77,8 @@ var (
 
 	categoryMap map[int]*Category
 	categories  []Category
+
+	DisableAccessLogging = false
 )
 
 type Config struct {
@@ -314,7 +316,9 @@ func requestLogging(f http.HandlerFunc) func(w http.ResponseWriter, req *http.Re
 	return func(w http.ResponseWriter, req *http.Request) {
 		t1 := time.Now()
 		f(w, req)
-		log.Printf("method:%s path:%s duration:%v", req.Method, req.URL.Path, time.Now().Sub(t1))
+		if !DisableAccessLogging {
+			log.Printf("method:%s path:%s duration:%v", req.Method, req.URL.Path, time.Now().Sub(t1))
+		}
 	}
 }
 
@@ -325,13 +329,16 @@ func main() {
 	password := "isucari"
 	dbname := "isucari"
 	cpuprofile := ""
+	disableAccessLog := false
 	flag.StringVar(&host, "mysql-host", host, "mysql host")
 	flag.StringVar(&port, "mysql-port", port, "mysql port")
 	flag.StringVar(&user, "mysql-user", user, "mysql user")
 	flag.StringVar(&password, "mysql-password", password, "mysql password")
 	flag.StringVar(&dbname, "mysql-db", dbname, "database name")
 	flag.StringVar(&cpuprofile, "cpuprofile", cpuprofile, "enable cpuprofile")
+	flag.BoolVar(&disableAccessLog, "disable-access-log", false, "disable access logging")
 	flag.Parse()
+	DisableAccessLogging = disableAccessLog
 
 	_, err := strconv.Atoi(port)
 	if err != nil {
