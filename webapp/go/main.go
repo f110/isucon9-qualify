@@ -317,7 +317,7 @@ func requestLogging(f http.HandlerFunc) func(w http.ResponseWriter, req *http.Re
 		t1 := time.Now()
 		f(w, req)
 		if !DisableAccessLogging {
-			log.Printf("method:%s path:%s duration:%v", req.Method, req.URL.Path, time.Now().Sub(t1))
+			log.Printf("method:%s path:%s query:%s duration:%v", req.Method, req.URL.Path, req.URL.Query(), time.Now().Sub(t1))
 		}
 	}
 }
@@ -1128,29 +1128,42 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	shippingMap := make(map[int64]*Shipping)
-	shipmentStatusMap := make(map[string]*APIShipmentStatusRes)
-	var wg sync.WaitGroup
-	var mu sync.Mutex
+
+	reserveIds := make([]string, 0)
 	for _, v := range shippings {
 		shippingMap[v.TransactionEvidenceID] = v
 
-		wg.Add(1)
-		go func(reserveId string) {
-			defer wg.Done()
+		switch v.Status {
+		case ShippingsStatusInitial, ShippingsStatusDone:
+			continue
+		default:
+			reserveIds = append(reserveIds, v.ReserveID)
+		}
 
-			ssr, err := APIShipmentStatus(getShipmentServiceURL(), &APIShipmentStatusReq{
-				ReserveID: reserveId,
-			})
-			if err != nil {
-				log.Print(err)
-				return
-			}
-			mu.Lock()
-			shipmentStatusMap[reserveId] = ssr
-			mu.Unlock()
-		}(v.ReserveID)
 	}
-	wg.Wait()
+	var mu sync.Mutex
+	shipmentStatusMap := make(map[string]*APIShipmentStatusRes)
+	if len(reserveIds) != 0 {
+		var wg sync.WaitGroup
+		for _, v := range reserveIds {
+			wg.Add(1)
+			go func(reserveId string) {
+				defer wg.Done()
+
+				ssr, err := APIShipmentStatus(getShipmentServiceURL(), &APIShipmentStatusReq{
+					ReserveID: reserveId,
+				})
+				if err != nil {
+					log.Print(err)
+					return
+				}
+				mu.Lock()
+				shipmentStatusMap[reserveId] = ssr
+				mu.Unlock()
+			}(v)
+		}
+		wg.Wait()
+	}
 
 	itemDetails := make([]ItemDetail, 0)
 	for _, item := range items {
@@ -1191,7 +1204,12 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 			shipping := shippingMap[transactionEvidence.ID]
 			ssr, ok := shipmentStatusMap[shipping.ReserveID]
 			if !ok {
-				ssr = &APIShipmentStatusRes{Status: ShippingsStatusInitial}
+				switch shipping.Status {
+				case ShippingsStatusInitial:
+					ssr = &APIShipmentStatusRes{Status: ShippingsStatusInitial}
+				case ShippingsStatusDone:
+					ssr = &APIShipmentStatusRes{Status: ShippingsStatusDone}
+				}
 			}
 
 			itemDetail.TransactionEvidenceID = transactionEvidence.ID
