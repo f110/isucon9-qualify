@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"html/template"
 	"io/ioutil"
@@ -71,6 +72,8 @@ var (
 
 	categoryMap map[int]*Category
 	categories  []Category
+
+	configuredCampaign int
 )
 
 type Config struct {
@@ -347,6 +350,11 @@ func main() {
 		password = "isucari"
 	}
 
+	campaign := Campaign
+	flag.IntVar(&campaign, "campaign", Campaign, "Campaign")
+	flag.Parse()
+	configuredCampaign = campaign
+
 	dsn := fmt.Sprintf(
 		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=Local",
 		user,
@@ -532,7 +540,7 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 
 	res := resInitialize{
 		// キャンペーン実施時には還元率の設定を返す。詳しくはマニュアルを参照のこと。
-		Campaign: Campaign,
+		Campaign: configuredCampaign,
 		// 実装言語を返す
 		Language: "Go",
 	}
