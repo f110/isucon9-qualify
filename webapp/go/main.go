@@ -748,6 +748,7 @@ func getNewCategoryItems(w http.ResponseWriter, r *http.Request) {
 	for _, item := range items {
 		seller, err := getUserSimpleByID(dbx, item.SellerID)
 		if err != nil {
+			log.Print(err)
 			outputErrorMsg(w, http.StatusNotFound, "seller not found")
 			return
 		}
@@ -1337,16 +1338,9 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	seller := User{}
-	err = dbx.Get(&seller, "SELECT * FROM `users` WHERE `id` = ?", targetItem.SellerID)
-	if err == sql.ErrNoRows {
-		outputErrorMsg(w, http.StatusNotFound, "seller not found")
-		return
-	}
+	seller, err := UserRepository.Get(targetItem.SellerID)
 	if err != nil {
-		log.Print(err)
-
-		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		outputErrorMsg(w, http.StatusNotFound, "seller not found")
 		return
 	}
 
@@ -1999,15 +1993,9 @@ func postSell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	seller := User{}
-	err = dbx.Get(&seller, "SELECT * FROM `users` WHERE `id` = ?", user.ID)
-	if err == sql.ErrNoRows {
-		outputErrorMsg(w, http.StatusNotFound, "user not found")
-		return
-	}
+	seller, err := UserRepository.Get(user.ID)
 	if err != nil {
-		log.Print(err)
-		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		outputErrorMsg(w, http.StatusNotFound, "user not found")
 		return
 	}
 
@@ -2102,15 +2090,9 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	seller := User{}
-	err = dbx.Get(&seller, "SELECT * FROM `users` WHERE `id` = ?", user.ID)
-	if err == sql.ErrNoRows {
-		outputErrorMsg(w, http.StatusNotFound, "user not found")
-		return
-	}
+	seller, err := UserRepository.Get(user.ID)
 	if err != nil {
-		log.Print(err)
-		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		outputErrorMsg(w, http.StatusNotFound, "user not found")
 		return
 	}
 
