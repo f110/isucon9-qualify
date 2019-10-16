@@ -58,6 +58,8 @@ const (
 	TransactionsPerPage = 10
 
 	BcryptCost = 10
+
+	Campaign = 1
 )
 
 var (
@@ -510,7 +512,7 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 
 	res := resInitialize{
 		// キャンペーン実施時には還元率の設定を返す。詳しくはマニュアルを参照のこと。
-		Campaign: 0,
+		Campaign: Campaign,
 		// 実装言語を返す
 		Language: "Go",
 	}
@@ -1355,9 +1357,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		category.ParentID,
 	)
 	if err != nil {
-		log.Print(err)
-
-		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		outputErrorMsg(w, http.StatusForbidden, "db error")
 		tx.Rollback()
 		return
 	}
