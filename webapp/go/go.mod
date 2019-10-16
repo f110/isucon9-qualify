@@ -3,6 +3,7 @@ module github.com/isucon/isucon9-qualify/webapp/go
 go 1.12
 
 require (
+	github.com/bradfitz/gomemcache v0.0.0-20190913173617-a41fca850d0b
 	github.com/go-sql-driver/mysql v1.4.1
 	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b
 	github.com/gorilla/sessions v1.2.0

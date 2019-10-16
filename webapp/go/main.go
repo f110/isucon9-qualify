@@ -75,6 +75,8 @@ var (
 	categories  []Category
 
 	configuredCampaign int
+
+	UserRepository *userRepository
 )
 
 type Config struct {
@@ -372,6 +374,9 @@ func main() {
 		log.Fatalf("failed to connect to DB: %s.", err.Error())
 	}
 	defer dbx.Close()
+	dbx.SetMaxIdleConns(10000)
+
+	UserRepository = NewUserRepository(dbx, "localhost:11211")
 
 	mux := &mux{goji.NewMux()}
 
@@ -438,21 +443,23 @@ func getUser(r *http.Request) (user User, errCode int, errMsg string) {
 		return user, http.StatusNotFound, "no session"
 	}
 
-	err := dbx.Get(&user, "SELECT * FROM `users` WHERE `id` = ?", userID)
-	if err == sql.ErrNoRows {
-		return user, http.StatusNotFound, "user not found"
-	}
-	if err != nil {
-		log.Print(err)
-		return user, http.StatusInternalServerError, "db error"
+	id, ok := userID.(int64)
+	if !ok {
+		return user, http.StatusInternalServerError, "can not convert user id"
 	}
 
+	u, err := UserRepository.Get(id)
+	if err != nil {
+		log.Print(err)
+		return user, http.StatusInternalServerError, "can not find user"
+	}
+
+	user = *u
 	return user, http.StatusOK, ""
 }
 
 func getUserSimpleByID(q sqlx.Queryer, userID int64) (userSimple UserSimple, err error) {
-	user := User{}
-	err = sqlx.Get(q, &user, "SELECT * FROM `users` WHERE `id` = ?", userID)
+	user, err := UserRepository.Get(userID)
 	if err != nil {
 		return userSimple, err
 	}
@@ -541,6 +548,8 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	UserRepository.Flush()
+
 	res := resInitialize{
 		// キャンペーン実施時には還元率の設定を返す。詳しくはマニュアルを参照のこと。
 		Campaign: configuredCampaign,
@@ -611,6 +620,7 @@ func getNewItems(w http.ResponseWriter, r *http.Request) {
 	for _, item := range items {
 		seller, err := getUserSimpleByID(dbx, item.SellerID)
 		if err != nil {
+			log.Print(err)
 			outputErrorMsg(w, http.StatusNotFound, "seller not found")
 			return
 		}
@@ -2055,6 +2065,7 @@ func postSell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tx.Commit()
+	UserRepository.Invalidate(seller.ID)
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	json.NewEncoder(w).Encode(resSell{ID: itemID})
@@ -2148,6 +2159,7 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tx.Commit()
+	UserRepository.Invalidate(seller.ID)
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	json.NewEncoder(w).Encode(&resItemEdit{
@@ -2281,6 +2293,7 @@ func postRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID, err := result.LastInsertId()
+	UserRepository.Invalidate(userID)
 
 	if err != nil {
 		log.Print(err)
