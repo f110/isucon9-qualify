@@ -269,6 +269,23 @@ type resSetting struct {
 	Categories        []Category `json:"categories"`
 }
 
+func accessLog(h func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, req *http.Request) {
+		t1 := time.Now()
+		h(w, req)
+
+		log.Printf("method:%s path:%s duration:%v", req.Method, req.URL.Path, time.Now().Sub(t1))
+	}
+}
+
+type mux struct {
+	*goji.Mux
+}
+
+func (m *mux) HandleFunc(p goji.Pattern, h func(http.ResponseWriter, *http.Request)) {
+	m.Mux.HandleFunc(p, accessLog(h))
+}
+
 func init() {
 	store = sessions.NewCookieStore([]byte("abc"))
 
@@ -320,7 +337,7 @@ func main() {
 	}
 	defer dbx.Close()
 
-	mux := goji.NewMux()
+	mux := &mux{goji.NewMux()}
 
 	// API
 	mux.HandleFunc(pat.Post("/initialize"), postInitialize)
