@@ -21,6 +21,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
+	"github.com/isucon/isucon9-qualify/webapp/go/querylog"
 	"github.com/jmoiron/sqlx"
 	goji "goji.io"
 	"goji.io/pat"
@@ -364,7 +365,9 @@ func main() {
 		dbname,
 	)
 
-	dbx, err = sqlx.Open("mysql", dsn)
+	querylog.InitWithStandardLogger(log.New(os.Stderr, "", log.Ldate|log.Ltime))
+	querylog.SetMinimumDuration(10 * time.Millisecond)
+	dbx, err = sqlx.Open("querylog", dsn)
 	if err != nil {
 		log.Fatalf("failed to connect to DB: %s.", err.Error())
 	}
@@ -572,11 +575,11 @@ func getNewItems(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	items := []Item{}
+	items := make([]Item, 0)
 	if itemID > 0 && createdAt > 0 {
 		// paging
 		err := dbx.Select(&items,
-			"SELECT * FROM `items` WHERE `status` IN (?,?) AND (`created_at` < ?  OR (`created_at` <= ? AND `id` < ?)) ORDER BY `created_at` DESC, `id` DESC LIMIT ?",
+			"SELECT * FROM `items` WHERE `status` IN (?, ?) AND (`created_at` < ? OR (`created_at` <= ? AND `id` < ?)) ORDER BY `created_at` DESC, `id` DESC LIMIT ?",
 			ItemStatusOnSale,
 			ItemStatusSoldOut,
 			time.Unix(createdAt, 0),
@@ -592,7 +595,7 @@ func getNewItems(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// 1st page
 		err := dbx.Select(&items,
-			"SELECT * FROM `items` WHERE `status` IN (?,?) ORDER BY `created_at` DESC, `id` DESC LIMIT ?",
+			"SELECT * FROM `items` WHERE `status` IN (?, ?) ORDER BY `created_at` DESC, `id` DESC LIMIT ?",
 			ItemStatusOnSale,
 			ItemStatusSoldOut,
 			ItemsPerPage+1,
@@ -604,7 +607,7 @@ func getNewItems(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	itemSimples := []ItemSimple{}
+	itemSimples := make([]ItemSimple, 0)
 	for _, item := range items {
 		seller, err := getUserSimpleByID(dbx, item.SellerID)
 		if err != nil {
