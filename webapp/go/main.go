@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -57,7 +58,7 @@ const (
 	ItemsPerPage        = 48
 	TransactionsPerPage = 10
 
-	BcryptCost = 10
+	BcryptCost = 4
 
 	Campaign = 1
 )
@@ -66,6 +67,9 @@ var (
 	templates *template.Template
 	dbx       *sqlx.DB
 	store     sessions.Store
+
+	categoryMap map[int]*Category
+	categories  []Category
 )
 
 type Config struct {
@@ -296,6 +300,24 @@ func init() {
 	templates = template.Must(template.ParseFiles(
 		"../public/index.html",
 	))
+
+	categoryMap = make(map[int]*Category)
+	for _, v := range embedCategories {
+		categoryMap[v.ID] = v
+	}
+	for _, v := range categoryMap {
+		if v.ParentID != 0 {
+			v.ParentCategoryName = categoryMap[v.ParentID].CategoryName
+		}
+	}
+
+	categories = make([]Category, 0, len(categoryMap))
+	for _, v := range categoryMap {
+		categories = append(categories, *v)
+	}
+	sort.Slice(categories, func(i, j int) bool {
+		return categories[i].ID < categories[j].ID
+	})
 }
 
 func main() {
@@ -376,6 +398,7 @@ func main() {
 	mux.HandleFunc(pat.Get("/users/setting"), getIndex)
 	// Assets
 	mux.Handle(pat.Get("/*"), http.FileServer(http.Dir("../public")))
+
 	log.Fatal(http.ListenAndServe(":8000", mux))
 }
 
@@ -695,7 +718,7 @@ func getNewCategoryItems(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	items := []Item{}
+	items := make([]Item, 0)
 	err = dbx.Select(&items, inQuery, inArgs...)
 
 	if err != nil {
@@ -704,7 +727,7 @@ func getNewCategoryItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	itemSimples := []ItemSimple{}
+	itemSimples := make([]ItemSimple, 0)
 	for _, item := range items {
 		seller, err := getUserSimpleByID(dbx, item.SellerID)
 		if err != nil {
