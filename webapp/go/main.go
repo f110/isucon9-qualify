@@ -61,7 +61,7 @@ const (
 
 	BcryptCost = 4
 
-	Campaign = 1
+	Campaign = 2
 )
 
 var (
@@ -802,11 +802,11 @@ func getUserItems(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	items := []Item{}
+	items := make([]Item, 0)
 	if itemID > 0 && createdAt > 0 {
 		// paging
 		err := dbx.Select(&items,
-			"SELECT * FROM `items` WHERE `seller_id` = ? AND `status` IN (?,?,?) AND (`created_at` < ?  OR (`created_at` <= ? AND `id` < ?)) ORDER BY `created_at` DESC, `id` DESC LIMIT ?",
+			"SELECT * FROM `items` WHERE `seller_id` = ? AND `status` IN (?, ?, ?) AND (`created_at` < ?  OR (`created_at` <= ? AND `id` < ?)) ORDER BY `created_at` DESC, `id` DESC LIMIT ?",
 			userSimple.ID,
 			ItemStatusOnSale,
 			ItemStatusTrading,
@@ -824,7 +824,7 @@ func getUserItems(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// 1st page
 		err := dbx.Select(&items,
-			"SELECT * FROM `items` WHERE `seller_id` = ? AND `status` IN (?,?,?) ORDER BY `created_at` DESC, `id` DESC LIMIT ?",
+			"SELECT * FROM `items` WHERE `seller_id` = ? AND `status` IN (?, ?, ?) ORDER BY `created_at` DESC, `id` DESC LIMIT ?",
 			userSimple.ID,
 			ItemStatusOnSale,
 			ItemStatusTrading,
@@ -838,7 +838,7 @@ func getUserItems(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	itemSimples := []ItemSimple{}
+	itemSimples := make([]ItemSimple, 0)
 	for _, item := range items {
 		category, err := getCategoryByID(item.CategoryID)
 		if err != nil {
@@ -1632,7 +1632,6 @@ func postShip(w http.ResponseWriter, r *http.Request) {
 		tx.Rollback()
 		return
 	}
-
 	tx.Commit()
 
 	rps := resPostShip{
