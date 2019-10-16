@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -1286,7 +1287,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	targetItem := Item{}
-	err = dbx.Get(&targetItem, "SELECT * FROM `items` WHERE `id` = ?", rb.ItemID)
+	err = dbx.Get(&targetItem, "SELECT * FROM `items` WHERE `id` = ? FOR UPDATE", rb.ItemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "item not found")
 		return
@@ -1376,10 +1377,14 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 	}
 
+	rollbacked := false
 	rollback := func(itemId int64) {
+		rollbacked = true
+
 		tx := dbx.MustBegin()
-		_, err := tx.Exec("UPDATE `items` SET `buyer_id` = 0, `status` = ? WHERE `id` = ?",
+		_, err := tx.Exec("UPDATE `items` SET `buyer_id` = 0, `status` = ?, `updated_at` = ? WHERE `id` = ?",
 			ItemStatusOnSale,
+			targetItem.UpdatedAt,
 			itemId,
 		)
 		if err != nil {
@@ -1396,49 +1401,68 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		tx.Commit()
 	}
 
-	scr, err := APIShipmentCreate(getShipmentServiceURL(), &APIShipmentCreateReq{
-		ToAddress:   buyer.Address,
-		ToName:      buyer.AccountName,
-		FromAddress: seller.Address,
-		FromName:    seller.AccountName,
-	})
-	if err != nil {
-		log.Print(err)
-		outputErrorMsg(w, http.StatusInternalServerError, "failed to request to shipment service")
-		rollback(targetItem.ID)
+	var wg sync.WaitGroup
+	var scr *APIShipmentCreateRes
+	var errorStatus int
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 
-		return
-	}
+		scr, err = APIShipmentCreate(getShipmentServiceURL(), &APIShipmentCreateReq{
+			ToAddress:   buyer.Address,
+			ToName:      buyer.AccountName,
+			FromAddress: seller.Address,
+			FromName:    seller.AccountName,
+		})
+		if err != nil {
+			log.Print(err)
+			errorStatus = http.StatusInternalServerError
+			rollback(targetItem.ID)
 
-	pstr, err := APIPaymentToken(getPaymentServiceURL(), &APIPaymentServiceTokenReq{
-		ShopID: PaymentServiceIsucariShopID,
-		Token:  rb.Token,
-		APIKey: PaymentServiceIsucariAPIKey,
-		Price:  targetItem.Price,
-	})
-	if err != nil {
-		log.Print(err)
+			return
+		}
+	}()
 
-		outputErrorMsg(w, http.StatusInternalServerError, "payment service is failed")
-		rollback(targetItem.ID)
-		return
-	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 
-	if pstr.Status == "invalid" {
-		outputErrorMsg(w, http.StatusBadRequest, "カード情報に誤りがあります")
-		rollback(targetItem.ID)
-		return
-	}
+		pstr, err := APIPaymentToken(getPaymentServiceURL(), &APIPaymentServiceTokenReq{
+			ShopID: PaymentServiceIsucariShopID,
+			Token:  rb.Token,
+			APIKey: PaymentServiceIsucariAPIKey,
+			Price:  targetItem.Price,
+		})
+		if err != nil {
+			log.Print(err)
 
-	if pstr.Status == "fail" {
-		outputErrorMsg(w, http.StatusBadRequest, "カードの残高が足りません")
-		rollback(targetItem.ID)
-		return
-	}
+			errorStatus = http.StatusInternalServerError
+			rollback(targetItem.ID)
+			return
+		}
 
-	if pstr.Status != "ok" {
-		outputErrorMsg(w, http.StatusBadRequest, "想定外のエラー")
-		rollback(targetItem.ID)
+		if pstr.Status == "invalid" {
+			errorStatus = http.StatusBadRequest
+			rollback(targetItem.ID)
+			return
+		}
+
+		if pstr.Status == "fail" {
+			errorStatus = http.StatusBadRequest
+			rollback(targetItem.ID)
+			return
+		}
+
+		if pstr.Status != "ok" {
+			errorStatus = http.StatusBadRequest
+			rollback(targetItem.ID)
+			return
+		}
+	}()
+	wg.Wait()
+
+	if rollbacked {
+		outputErrorMsg(w, errorStatus, "external service error")
 		return
 	}
 
@@ -1459,7 +1483,6 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
 		return
 	}
 
@@ -2073,9 +2096,9 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tx := dbx.MustBegin()
-	_, err = tx.Exec("UPDATE `items` SET `created_at` = ?, `updated_at` = ? WHERE `id` = ?",
-		now,
-		now,
+	_, err = tx.Exec("UPDATE `items` SET `created_at` = NOW(), `updated_at` = NOW() WHERE `id` = ?",
+		//now,
+		//now,
 		targetItem.ID,
 	)
 	if err != nil {
