@@ -2132,6 +2132,7 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	now := time.Unix(time.Now().Unix(), 0)
 	targetItem.CreatedAt = now
 	targetItem.UpdatedAt = now
 	_, err = dbx.Exec("UPDATE `items` SET `created_at` = ?, `updated_at` = ? WHERE `id` = ?",
