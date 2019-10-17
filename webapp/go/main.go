@@ -2034,8 +2034,7 @@ func postSell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx := dbx.MustBegin()
-	result, err := tx.Exec("INSERT INTO `items` (`seller_id`, `status`, `name`, `price`, `description`,`image_name`,`category_id`) VALUES (?, ?, ?, ?, ?, ?, ?)",
+	result, err := dbx.Exec("INSERT INTO `items` (`seller_id`, `status`, `name`, `price`, `description`,`image_name`,`category_id`) VALUES (?, ?, ?, ?, ?, ?, ?)",
 		seller.ID,
 		ItemStatusOnSale,
 		name,
@@ -2063,7 +2062,7 @@ func postSell(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	seller.NumSellItems += 1
 	seller.LastBump = now
-	_, err = tx.Exec("UPDATE `users` SET `num_sell_items` = `num_sell_items` + 1, `last_bump` = ? WHERE `id` = ?",
+	_, err = dbx.Exec("UPDATE `users` SET `num_sell_items` = `num_sell_items` + 1, `last_bump` = ? WHERE `id` = ?",
 		now,
 		seller.ID,
 	)
@@ -2073,7 +2072,6 @@ func postSell(w http.ResponseWriter, r *http.Request) {
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
 		return
 	}
-	tx.Commit()
 	UserRepository.UpdateCache(seller)
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
