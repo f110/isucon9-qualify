@@ -76,7 +76,8 @@ var (
 
 	configuredCampaign int
 
-	UserRepository *userRepository
+	UserRepository   *userRepository
+	DisableAccessLog bool
 )
 
 type Config struct {
@@ -287,7 +288,9 @@ func accessLog(h func(http.ResponseWriter, *http.Request)) func(http.ResponseWri
 		t1 := time.Now()
 		h(w, req)
 
-		log.Printf("method:%s path:%s duration:%v", req.Method, req.URL.Path, time.Now().Sub(t1))
+		if !DisableAccessLog {
+			log.Printf("method:%s path:%s duration:%v", req.Method, req.URL.Path, time.Now().Sub(t1))
+		}
 	}
 }
 
@@ -355,6 +358,7 @@ func main() {
 
 	campaign := Campaign
 	flag.IntVar(&campaign, "campaign", Campaign, "Campaign")
+	flag.BoolVar(&DisableAccessLog, "disable-access-log", false, "Do not show an access log")
 	flag.Parse()
 	configuredCampaign = campaign
 
@@ -549,6 +553,19 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	UserRepository.Flush()
+
+	users := make([]*User, 0)
+	if err := dbx.Select(&users, "SELECT id FROM `users`"); err != nil {
+		log.Print(err)
+		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	for _, v := range users {
+		_, err = UserRepository.Get(v.ID)
+		if err != nil {
+			log.Print(err)
+		}
+	}
 
 	res := resInitialize{
 		// キャンペーン実施時には還元率の設定を返す。詳しくはマニュアルを参照のこと。
