@@ -81,6 +81,7 @@ var (
 	ConfigRepository              *configRepository
 	ItemRepository                *itemRepository
 	TransactionEvidenceRepository *transactionEvidenceRepository
+	ShippingRepository            *shippingRepository
 	DisableAccessLog              bool
 	DisableQueryLog               bool
 )
@@ -397,6 +398,7 @@ func main() {
 	UserRepository = NewUserRepository(dbx, client)
 	ItemRepository = NewItemRepository(dbx, client)
 	TransactionEvidenceRepository = NewTransactionEvidenceRepository(dbx, client)
+	ShippingRepository = NewShippingRepository(dbx, client)
 	ConfigRepository = NewConfigRepository(dbx)
 
 	mux := &mux{goji.NewMux()}
@@ -1058,8 +1060,7 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if transactionEvidence != nil && transactionEvidence.ID > 0 {
-			shipping := Shipping{}
-			err = dbx.Get(&shipping, "SELECT * FROM `shippings` WHERE `transaction_evidence_id` = ?", transactionEvidence.ID)
+			shipping, err := ShippingRepository.Get(transactionEvidence.ID)
 			if err == sql.ErrNoRows {
 				outputErrorMsg(w, http.StatusNotFound, "shipping not found")
 				return
@@ -1183,8 +1184,7 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if transactionEvidence != nil && transactionEvidence.ID > 0 {
-			shipping := Shipping{}
-			err = dbx.Get(&shipping, "SELECT * FROM `shippings` WHERE `transaction_evidence_id` = ?", transactionEvidence.ID)
+			shipping, err := ShippingRepository.Get(transactionEvidence.ID)
 			if err == sql.ErrNoRows {
 				outputErrorMsg(w, http.StatusNotFound, "shipping not found")
 				return
@@ -1316,8 +1316,7 @@ func getQRCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shipping := Shipping{}
-	err = dbx.Get(&shipping, "SELECT * FROM `shippings` WHERE `transaction_evidence_id` = ?", transactionEvidence.ID)
+	shipping, err := ShippingRepository.Get(transactionEvidence.ID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "shippings not found")
 		return
@@ -1558,6 +1557,18 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	ShippingRepository.UpdateCache(&Shipping{
+		TransactionEvidenceID: transactionEvidenceID,
+		Status:                ShippingsStatusInitial,
+		ItemName:              targetItem.Name,
+		ItemID:                targetItem.ID,
+		ReserveID:             scr.ReserveID,
+		ReserveTime:           scr.ReserveTime,
+		ToAddress:             buyer.Address,
+		ToName:                buyer.AccountName,
+		FromAddress:           seller.Address,
+		FromName:              seller.AccountName,
+	})
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	json.NewEncoder(w).Encode(resBuy{TransactionEvidenceID: transactionEvidenceID})
@@ -1625,8 +1636,7 @@ func postShip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shipping := Shipping{}
-	err = dbx.Get(&shipping, "SELECT * FROM `shippings` WHERE `transaction_evidence_id` = ?", transactionEvidence.ID)
+	shipping, err := ShippingRepository.Get(transactionEvidence.ID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "shippings not found")
 		return
@@ -1647,8 +1657,10 @@ func postShip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx := dbx.MustBegin()
-	_, err = tx.Exec("UPDATE `shippings` SET `status` = ?, `img_binary` = ?, `updated_at` = ? WHERE `transaction_evidence_id` = ?",
+	shipping.Status = ShippingsStatusWaitPickup
+	shipping.ImgBinary = img
+	shipping.UpdatedAt = time.Now()
+	_, err = dbx.Exec("UPDATE `shippings` SET `status` = ?, `img_binary` = ?, `updated_at` = ? WHERE `transaction_evidence_id` = ?",
 		ShippingsStatusWaitPickup,
 		img,
 		time.Now(),
@@ -1658,10 +1670,9 @@ func postShip(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
 		return
 	}
-	tx.Commit()
+	ShippingRepository.UpdateCache(shipping)
 
 	rps := resPostShip{
 		Path:      fmt.Sprintf("/transactions/%d.png", transactionEvidence.ID),
@@ -1732,8 +1743,7 @@ func postShipDone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shipping := Shipping{}
-	err = dbx.Get(&shipping, "SELECT * FROM `shippings` WHERE `transaction_evidence_id` = ?", transactionEvidence.ID)
+	shipping, err := ShippingRepository.Get(transactionEvidence.ID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "shippings not found")
 		return
@@ -1760,6 +1770,8 @@ func postShipDone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tx := dbx.MustBegin()
+	shipping.Status = ssr.Status
+	shipping.UpdatedAt = time.Now()
 	_, err = tx.Exec("UPDATE `shippings` SET `status` = ?, `updated_at` = ? WHERE `transaction_evidence_id` = ?",
 		ssr.Status,
 		time.Now(),
@@ -1790,6 +1802,7 @@ func postShipDone(w http.ResponseWriter, r *http.Request) {
 	}
 	tx.Commit()
 	TransactionEvidenceRepository.UpdateCache(transactionEvidence)
+	ShippingRepository.UpdateCache(shipping)
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	json.NewEncoder(w).Encode(resBuy{TransactionEvidenceID: transactionEvidence.ID})
@@ -1856,8 +1869,7 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shipping := Shipping{}
-	err = dbx.Get(&shipping, "SELECT * FROM `shippings` WHERE `transaction_evidence_id` = ?", transactionEvidence.ID)
+	shipping, err := ShippingRepository.Get(transactionEvidence.ID)
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
@@ -1881,6 +1893,8 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	tx := dbx.MustBegin()
+	shipping.Status = ShippingsStatusDone
+	shipping.UpdatedAt = now
 	_, err = tx.Exec("UPDATE `shippings` SET `status` = ?, `updated_at` = ? WHERE `transaction_evidence_id` = ?",
 		ShippingsStatusDone,
 		now,
@@ -1927,6 +1941,7 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 	tx.Commit()
 	ItemRepository.UpdateCache(item)
 	TransactionEvidenceRepository.UpdateCache(transactionEvidence)
+	ShippingRepository.UpdateCache(shipping)
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	json.NewEncoder(w).Encode(resBuy{TransactionEvidenceID: transactionEvidence.ID})
