@@ -557,6 +557,7 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	UserRepository.Flush()
+	ConfigRepository.Flush()
 
 	// warm user's cache
 	users := make([]*User, 0)

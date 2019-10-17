@@ -16,6 +16,10 @@ func NewConfigRepository(dbx *sqlx.DB) *configRepository {
 	return &configRepository{dbx: dbx, data: new(sync.Map)}
 }
 
+func (c *configRepository) Flush() {
+	c.data = new(sync.Map)
+}
+
 func (c *configRepository) Get(name string) (string, error) {
 	v, ok := c.data.Load(name)
 	if ok {
