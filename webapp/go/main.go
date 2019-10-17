@@ -77,11 +77,12 @@ var (
 
 	configuredCampaign int
 
-	UserRepository   *userRepository
-	ConfigRepository *configRepository
-	ItemRepository   *itemRepository
-	DisableAccessLog bool
-	DisableQueryLog  bool
+	UserRepository                *userRepository
+	ConfigRepository              *configRepository
+	ItemRepository                *itemRepository
+	TransactionEvidenceRepository *transactionEvidenceRepository
+	DisableAccessLog              bool
+	DisableQueryLog               bool
 )
 
 type Config struct {
@@ -395,6 +396,7 @@ func main() {
 	client.MaxIdleConns = 10000
 	UserRepository = NewUserRepository(dbx, client)
 	ItemRepository = NewItemRepository(dbx, client)
+	TransactionEvidenceRepository = NewTransactionEvidenceRepository(dbx, client)
 	ConfigRepository = NewConfigRepository(dbx)
 
 	mux := &mux{goji.NewMux()}
@@ -1042,8 +1044,12 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 			itemDetail.Buyer = &buyer
 		}
 
-		transactionEvidence := TransactionEvidence{}
-		err = dbx.Get(&transactionEvidence, "SELECT `id`, `status` FROM `transaction_evidences` WHERE `item_id` = ?", item.ID)
+		if item.Status == ItemStatusOnSale {
+			itemDetails = append(itemDetails, itemDetail)
+			continue
+		}
+
+		transactionEvidence, err := TransactionEvidenceRepository.Get(item.ID)
 		if err != nil && err != sql.ErrNoRows {
 			// It's able to ignore ErrNoRows
 			log.Print(err)
@@ -1051,7 +1057,7 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if transactionEvidence.ID > 0 {
+		if transactionEvidence != nil && transactionEvidence.ID > 0 {
 			shipping := Shipping{}
 			err = dbx.Get(&shipping, "SELECT * FROM `shippings` WHERE `transaction_evidence_id` = ?", transactionEvidence.ID)
 			if err == sql.ErrNoRows {
@@ -1168,8 +1174,7 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 		itemDetail.BuyerID = item.BuyerID
 		itemDetail.Buyer = &buyer
 
-		transactionEvidence := TransactionEvidence{}
-		err = dbx.Get(&transactionEvidence, "SELECT * FROM `transaction_evidences` WHERE `item_id` = ?", item.ID)
+		transactionEvidence, err := TransactionEvidenceRepository.Get(item.ID)
 		if err != nil && err != sql.ErrNoRows {
 			// It's able to ignore ErrNoRows
 			log.Print(err)
@@ -1177,7 +1182,7 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if transactionEvidence.ID > 0 {
+		if transactionEvidence != nil && transactionEvidence.ID > 0 {
 			shipping := Shipping{}
 			err = dbx.Get(&shipping, "SELECT * FROM `shippings` WHERE `transaction_evidence_id` = ?", transactionEvidence.ID)
 			if err == sql.ErrNoRows {
@@ -1419,6 +1424,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		tx.Rollback()
 		return
 	}
+	TransactionEvidenceRepository.Invalidate(transactionEvidenceID)
 
 	now := time.Now()
 	targetItem.BuyerID = buyer.ID
@@ -1581,8 +1587,7 @@ func postShip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	transactionEvidence := TransactionEvidence{}
-	err = dbx.Get(&transactionEvidence, "SELECT * FROM `transaction_evidences` WHERE `item_id` = ?", itemID)
+	transactionEvidence, err := TransactionEvidenceRepository.Get(itemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "transaction_evidences not found")
 		return
@@ -1591,6 +1596,11 @@ func postShip(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
 
+		return
+	}
+
+	if transactionEvidence.Status != TransactionEvidenceStatusWaitShipping {
+		outputErrorMsg(w, http.StatusForbidden, "準備ができていません")
 		return
 	}
 
@@ -1612,22 +1622,6 @@ func postShip(w http.ResponseWriter, r *http.Request) {
 
 	if item.Status != ItemStatusTrading {
 		outputErrorMsg(w, http.StatusForbidden, "商品が取引中ではありません")
-		return
-	}
-
-	err = dbx.Get(&transactionEvidence, "SELECT * FROM `transaction_evidences` WHERE `id` = ?", transactionEvidence.ID)
-	if err == sql.ErrNoRows {
-		outputErrorMsg(w, http.StatusNotFound, "transaction_evidences not found")
-		return
-	}
-	if err != nil {
-		log.Print(err)
-		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		return
-	}
-
-	if transactionEvidence.Status != TransactionEvidenceStatusWaitShipping {
-		outputErrorMsg(w, http.StatusForbidden, "準備ができていません")
 		return
 	}
 
@@ -1700,8 +1694,7 @@ func postShipDone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	transactionEvidence := TransactionEvidence{}
-	err = dbx.Get(&transactionEvidence, "SELECT * FROM `transaction_evidences` WHERE `item_id` = ?", itemID)
+	transactionEvidence, err := TransactionEvidenceRepository.Get(itemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "transaction_evidence not found")
 		return
@@ -1710,6 +1703,11 @@ func postShipDone(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
 
+		return
+	}
+
+	if transactionEvidence.Status != TransactionEvidenceStatusWaitShipping {
+		outputErrorMsg(w, http.StatusForbidden, "準備ができていません")
 		return
 	}
 
@@ -1731,22 +1729,6 @@ func postShipDone(w http.ResponseWriter, r *http.Request) {
 
 	if item.Status != ItemStatusTrading {
 		outputErrorMsg(w, http.StatusForbidden, "商品が取引中ではありません")
-		return
-	}
-
-	err = dbx.Get(&transactionEvidence, "SELECT * FROM `transaction_evidences` WHERE `id` = ?", transactionEvidence.ID)
-	if err == sql.ErrNoRows {
-		outputErrorMsg(w, http.StatusNotFound, "transaction_evidences not found")
-		return
-	}
-	if err != nil {
-		log.Print(err)
-		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		return
-	}
-
-	if transactionEvidence.Status != TransactionEvidenceStatusWaitShipping {
-		outputErrorMsg(w, http.StatusForbidden, "準備ができていません")
 		return
 	}
 
@@ -1791,6 +1773,8 @@ func postShipDone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	transactionEvidence.Status = TransactionEvidenceStatusWaitDone
+	transactionEvidence.UpdatedAt = time.Now()
 	_, err = tx.Exec("UPDATE `transaction_evidences` SET `status` = ?, `updated_at` = ? WHERE `id` = ? AND `status` = ?",
 		TransactionEvidenceStatusWaitDone,
 		time.Now(),
@@ -1805,6 +1789,7 @@ func postShipDone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tx.Commit()
+	TransactionEvidenceRepository.UpdateCache(transactionEvidence)
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	json.NewEncoder(w).Encode(resBuy{TransactionEvidenceID: transactionEvidence.ID})
@@ -1834,8 +1819,7 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	transactionEvidence := TransactionEvidence{}
-	err = dbx.Get(&transactionEvidence, "SELECT * FROM `transaction_evidences` WHERE `item_id` = ?", itemID)
+	transactionEvidence, err := TransactionEvidenceRepository.Get(itemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "transaction_evidence not found")
 		return
@@ -1844,6 +1828,10 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
 
+		return
+	}
+	if transactionEvidence.Status != TransactionEvidenceStatusWaitDone {
+		outputErrorMsg(w, http.StatusForbidden, "準備ができていません")
 		return
 	}
 
@@ -1865,22 +1853,6 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 
 	if item.Status != ItemStatusTrading {
 		outputErrorMsg(w, http.StatusForbidden, "商品が取引中ではありません")
-		return
-	}
-
-	err = dbx.Get(&transactionEvidence, "SELECT * FROM `transaction_evidences` WHERE `item_id` = ?", itemID)
-	if err == sql.ErrNoRows {
-		outputErrorMsg(w, http.StatusNotFound, "transaction_evidences not found")
-		return
-	}
-	if err != nil {
-		log.Print(err)
-		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		return
-	}
-
-	if transactionEvidence.Status != TransactionEvidenceStatusWaitDone {
-		outputErrorMsg(w, http.StatusForbidden, "準備ができていません")
 		return
 	}
 
@@ -1922,6 +1894,8 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	transactionEvidence.Status = TransactionEvidenceStatusDone
+	transactionEvidence.UpdatedAt = now
 	_, err = tx.Exec("UPDATE `transaction_evidences` SET `status` = ?, `updated_at` = ? WHERE `id` = ? AND `status` = ?",
 		TransactionEvidenceStatusDone,
 		now,
@@ -1952,6 +1926,7 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	tx.Commit()
 	ItemRepository.UpdateCache(item)
+	TransactionEvidenceRepository.UpdateCache(transactionEvidence)
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	json.NewEncoder(w).Encode(resBuy{TransactionEvidenceID: transactionEvidence.ID})
