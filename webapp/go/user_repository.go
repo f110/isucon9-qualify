@@ -18,9 +18,7 @@ type userRepository struct {
 	bufPool *sync.Pool
 }
 
-func NewUserRepository(dbx *sqlx.DB, server string) *userRepository {
-	client := memcache.New(server)
-	client.MaxIdleConns = 10000
+func NewUserRepository(dbx *sqlx.DB, client *memcache.Client) *userRepository {
 	return &userRepository{
 		dbx:    dbx,
 		client: client,

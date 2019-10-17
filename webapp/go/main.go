@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bradfitz/gomemcache/memcache"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
 	"github.com/isucon/isucon9-qualify/webapp/go/querylog"
@@ -77,6 +78,7 @@ var (
 	configuredCampaign int
 
 	UserRepository   *userRepository
+	ConfigRepository *configRepository
 	DisableAccessLog bool
 	DisableQueryLog  bool
 )
@@ -388,7 +390,10 @@ func main() {
 	defer dbx.Close()
 	dbx.SetMaxIdleConns(10000)
 
-	UserRepository = NewUserRepository(dbx, "localhost:11212")
+	client := memcache.New("localhost:11212")
+	client.MaxIdleConns = 10000
+	UserRepository = NewUserRepository(dbx, client)
+	ConfigRepository = NewConfigRepository(dbx)
 
 	mux := &mux{goji.NewMux()}
 
@@ -490,16 +495,7 @@ func getCategoryByID(categoryID int) (category Category, err error) {
 }
 
 func getConfigByName(name string) (string, error) {
-	config := Config{}
-	err := dbx.Get(&config, "SELECT * FROM `configs` WHERE `name` = ?", name)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	if err != nil {
-		log.Print(err)
-		return "", err
-	}
-	return config.Val, err
+	return ConfigRepository.Get(name)
 }
 
 func getPaymentServiceURL() string {
@@ -562,6 +558,7 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 
 	UserRepository.Flush()
 
+	// warm user's cache
 	users := make([]*User, 0)
 	if err := dbx.Select(&users, "SELECT id FROM `users`"); err != nil {
 		log.Print(err)
@@ -574,6 +571,10 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 			log.Print(err)
 		}
 	}
+
+	// warm config cache
+	_, _ = ConfigRepository.Get("payment_service_url")
+	_, _ = ConfigRepository.Get("shipment_service_url")
 
 	res := resInitialize{
 		// キャンペーン実施時には還元率の設定を返す。詳しくはマニュアルを参照のこと。
