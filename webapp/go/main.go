@@ -564,14 +564,13 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 
 	// warm user's cache
 	users := make([]*User, 0)
-	if err := dbx.Select(&users, "SELECT id FROM `users`"); err != nil {
+	if err := dbx.Select(&users, "SELECT * FROM `users`"); err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
 		return
 	}
 	for _, v := range users {
-		_, err = UserRepository.Get(v.ID)
-		if err != nil {
+		if err := UserRepository.UpdateCache(v); err != nil {
 			log.Print(err)
 		}
 	}
@@ -579,6 +578,19 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 	// warm config cache
 	_, _ = ConfigRepository.Get("payment_service_url")
 	_, _ = ConfigRepository.Get("shipment_service_url")
+
+	// warm item cache
+	items := make([]*Item, 0)
+	if err := dbx.Select(&items, "SELECT * FROM `items`"); err != nil {
+		log.Print(err)
+		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	for _, v := range items {
+		if err := ItemRepository.UpdateCache(v); err != nil {
+			log.Print(err)
+		}
+	}
 
 	res := resInitialize{
 		// キャンペーン実施時には還元率の設定を返す。詳しくはマニュアルを参照のこと。
