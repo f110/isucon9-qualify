@@ -79,6 +79,7 @@ var (
 
 	UserRepository   *userRepository
 	ConfigRepository *configRepository
+	ItemRepository   *itemRepository
 	DisableAccessLog bool
 	DisableQueryLog  bool
 )
@@ -393,6 +394,7 @@ func main() {
 	client := memcache.New("localhost:11212")
 	client.MaxIdleConns = 10000
 	UserRepository = NewUserRepository(dbx, client)
+	ItemRepository = NewItemRepository(dbx, client)
 	ConfigRepository = NewConfigRepository(dbx)
 
 	mux := &mux{goji.NewMux()}
@@ -557,6 +559,7 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	UserRepository.Flush()
+	ItemRepository.Flush()
 	ConfigRepository.Flush()
 
 	// warm user's cache
@@ -1102,8 +1105,7 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item := Item{}
-	err = dbx.Get(&item, "SELECT * FROM `items` WHERE `id` = ?", itemID)
+	item, err := ItemRepository.Get(itemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "item not found")
 		return
@@ -1215,8 +1217,7 @@ func postItemEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetItem := Item{}
-	err = dbx.Get(&targetItem, "SELECT * FROM `items` WHERE `id` = ?", itemID)
+	targetItem, err := ItemRepository.Get(itemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "item not found")
 		return
@@ -1240,6 +1241,8 @@ func postItemEdit(w http.ResponseWriter, r *http.Request) {
 
 	tx := dbx.MustBegin()
 	now := time.Now()
+	targetItem.Price = price
+	targetItem.UpdatedAt = now
 	_, err = tx.Exec("UPDATE `items` SET `price` = ?, `updated_at` = ? WHERE `id` = ? AND `status` = ?",
 		price,
 		now,
@@ -1253,8 +1256,8 @@ func postItemEdit(w http.ResponseWriter, r *http.Request) {
 		tx.Rollback()
 		return
 	}
-
 	tx.Commit()
+	ItemRepository.UpdateCache(targetItem)
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	json.NewEncoder(w).Encode(&resItemEdit{
@@ -1342,8 +1345,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetItem := Item{}
-	err = dbx.Get(&targetItem, "SELECT * FROM `items` WHERE `id` = ?", rb.ItemID)
+	targetItem, err := ItemRepository.Get(rb.ItemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "item not found")
 		return
@@ -1406,10 +1408,14 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	now := time.Now()
+	targetItem.BuyerID = buyer.ID
+	targetItem.Status = ItemStatusTrading
+	targetItem.UpdatedAt = now
 	_, err = tx.Exec("UPDATE `items` SET `buyer_id` = ?, `status` = ?, `updated_at` = ? WHERE `id` = ? AND `buyer_id` = 0 AND `status` = ?",
 		buyer.ID,
 		ItemStatusTrading,
-		time.Now(),
+		now,
 		targetItem.ID,
 		ItemStatusOnSale,
 	)
@@ -1423,6 +1429,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 	if err := tx.Commit(); err != nil {
 		log.Print(err)
 	}
+	ItemRepository.UpdateCache(targetItem)
 
 	rollbacked := false
 	rollback := func(itemId int64) {
@@ -1446,6 +1453,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tx.Commit()
+		ItemRepository.Invalidate(itemId)
 	}
 
 	var wg sync.WaitGroup
@@ -1579,8 +1587,7 @@ func postShip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item := Item{}
-	err = dbx.Get(&item, "SELECT * FROM `items` WHERE `id` = ?", itemID)
+	item, err := ItemRepository.Get(itemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "item not found")
 		return
@@ -1699,8 +1706,7 @@ func postShipDone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item := Item{}
-	err = dbx.Get(&item, "SELECT * FROM `items` WHERE `id` = ?", itemID)
+	item, err := ItemRepository.Get(itemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "items not found")
 		return
@@ -1834,8 +1840,7 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item := Item{}
-	err = dbx.Get(&item, "SELECT * FROM `items` WHERE `id` = ?", itemID)
+	item, err := ItemRepository.Get(itemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "items not found")
 		return
@@ -1890,10 +1895,11 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	now := time.Now()
 	tx := dbx.MustBegin()
 	_, err = tx.Exec("UPDATE `shippings` SET `status` = ?, `updated_at` = ? WHERE `transaction_evidence_id` = ?",
 		ShippingsStatusDone,
-		time.Now(),
+		now,
 		transactionEvidence.ID,
 	)
 	if err != nil {
@@ -1906,7 +1912,7 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 
 	_, err = tx.Exec("UPDATE `transaction_evidences` SET `status` = ?, `updated_at` = ? WHERE `id` = ? AND `status` = ?",
 		TransactionEvidenceStatusDone,
-		time.Now(),
+		now,
 		transactionEvidence.ID,
 		TransactionEvidenceStatusWaitDone,
 	)
@@ -1918,9 +1924,11 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	item.Status = ItemStatusSoldOut
+	item.UpdatedAt = now
 	_, err = tx.Exec("UPDATE `items` SET `status` = ?, `updated_at` = ? WHERE `id` = ?",
 		ItemStatusSoldOut,
-		time.Now(),
+		now,
 		itemID,
 	)
 	if err != nil {
@@ -1930,8 +1938,8 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 		tx.Rollback()
 		return
 	}
-
 	tx.Commit()
+	ItemRepository.UpdateCache(item)
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	json.NewEncoder(w).Encode(resBuy{TransactionEvidenceID: transactionEvidence.ID})
@@ -2050,6 +2058,7 @@ func postSell(w http.ResponseWriter, r *http.Request) {
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	ItemRepository.Invalidate(itemID)
 
 	now := time.Now()
 	seller.NumSellItems += 1
@@ -2101,8 +2110,7 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetItem := Item{}
-	err = dbx.Get(&targetItem, "SELECT * FROM `items` WHERE `id` = ?", itemID)
+	targetItem, err := ItemRepository.Get(itemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "item not found")
 		return
@@ -2131,15 +2139,18 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	targetItem.CreatedAt = now
+	targetItem.UpdatedAt = now
 	tx := dbx.MustBegin()
-	_, err = tx.Exec("UPDATE `items` SET `created_at` = NOW(), `updated_at` = NOW() WHERE `id` = ?",
-		//now,
-		//now,
+	_, err = tx.Exec("UPDATE `items` SET `created_at` = ?, `updated_at` = ? WHERE `id` = ?",
+		now,
+		now,
 		targetItem.ID,
 	)
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		tx.Rollback()
 		return
 	}
 
@@ -2151,9 +2162,11 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		tx.Rollback()
 		return
 	}
 	tx.Commit()
+	ItemRepository.UpdateCache(targetItem)
 	UserRepository.UpdateCache(seller)
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
