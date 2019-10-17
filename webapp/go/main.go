@@ -1387,7 +1387,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		targetItem.ID,
 		targetItem.Name,
 		targetItem.Price,
-		targetItem.Description,
+		"",
 		category.ID,
 		category.ParentID,
 	)
