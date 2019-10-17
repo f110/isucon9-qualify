@@ -57,7 +57,7 @@ const (
 	ShippingsStatusShipping   = "shipping"
 	ShippingsStatusDone       = "done"
 
-	BumpChargeSeconds = 3 * time.Second
+	BumpChargeSeconds = 3
 
 	ItemsPerPage        = 48
 	TransactionsPerPage = 10
@@ -988,7 +988,7 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	itemDetails := make([]ItemDetail, 0)
+	itemDetails := make([]ItemDetail, 0, len(items))
 	for _, item := range items {
 		seller, err := getUserSimpleByID(dbx, item.SellerID)
 		if err != nil {
@@ -1031,7 +1031,7 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		transactionEvidence := TransactionEvidence{}
-		err = dbx.Get(&transactionEvidence, "SELECT * FROM `transaction_evidences` WHERE `item_id` = ?", item.ID)
+		err = dbx.Get(&transactionEvidence, "SELECT `id`, `status` FROM `transaction_evidences` WHERE `item_id` = ?", item.ID)
 		if err != nil && err != sql.ErrNoRows {
 			// It's able to ignore ErrNoRows
 			log.Print(err)
@@ -2059,13 +2059,8 @@ func postSell(w http.ResponseWriter, r *http.Request) {
 	}
 	ItemRepository.Invalidate(itemID)
 
-	now := time.Now()
 	seller.NumSellItems += 1
-	seller.LastBump = now
-	_, err = dbx.Exec("UPDATE `users` SET `num_sell_items` = `num_sell_items` + 1, `last_bump` = ? WHERE `id` = ?",
-		now,
-		seller.ID,
-	)
+	_, err = dbx.Exec("UPDATE `users` SET `num_sell_items` = `num_sell_items` + 1 WHERE `id` = ?", seller.ID)
 	if err != nil {
 		log.Print(err)
 
@@ -2073,6 +2068,7 @@ func postSell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	UserRepository.UpdateCache(seller)
+	UserRepository.Bump(seller.ID)
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	json.NewEncoder(w).Encode(resSell{ID: itemID})
@@ -2130,17 +2126,15 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now()
 	// last_bump + 3s > now
-	if seller.LastBump.Add(BumpChargeSeconds).After(now) {
+	if UserRepository.LastBump(seller.ID) != nil {
 		outputErrorMsg(w, http.StatusForbidden, "Bump not allowed")
 		return
 	}
 
 	targetItem.CreatedAt = now
 	targetItem.UpdatedAt = now
-	tx := dbx.MustBegin()
-	_, err = tx.Exec("UPDATE `items` SET `created_at` = ?, `updated_at` = ? WHERE `id` = ?",
+	_, err = dbx.Exec("UPDATE `items` SET `created_at` = ?, `updated_at` = ? WHERE `id` = ?",
 		now,
 		now,
 		targetItem.ID,
@@ -2148,24 +2142,11 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
 		return
 	}
 
-	seller.LastBump = now
-	_, err = tx.Exec("UPDATE `users` SET `last_bump` = ? WHERE `id` = ?",
-		now,
-		seller.ID,
-	)
-	if err != nil {
-		log.Print(err)
-		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
-		return
-	}
-	tx.Commit()
 	ItemRepository.UpdateCache(targetItem)
-	UserRepository.UpdateCache(seller)
+	UserRepository.Bump(seller.ID)
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	json.NewEncoder(w).Encode(&resItemEdit{

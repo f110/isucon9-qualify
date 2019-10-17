@@ -56,7 +56,7 @@ func (i *itemRepository) Get(id int64) (*Item, error) {
 }
 
 func (i *itemRepository) UpdateCache(item *Item) error {
-	return i.Invalidate(item.ID)
+	return i.setCache(item)
 }
 
 func (i *itemRepository) Invalidate(id int64) error {

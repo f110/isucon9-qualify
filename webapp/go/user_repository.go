@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -68,6 +69,19 @@ func (u *userRepository) Flush() {
 	u.client.FlushAll()
 }
 
+func (u *userRepository) LastBump(id int64) error {
+	_, err := u.client.Get(u.bumpKey(id))
+	if err != nil {
+		return nil
+	}
+
+	return errors.New("user bumped recently")
+}
+
+func (u *userRepository) Bump(id int64) error {
+	return u.client.Set(&memcache.Item{Key: u.bumpKey(id), Value: []byte("1"), Expiration: BumpChargeSeconds})
+}
+
 func (u *userRepository) setCache(user *User) error {
 	buf := u.bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
@@ -84,4 +98,8 @@ func (u *userRepository) setCache(user *User) error {
 
 func (u *userRepository) key(id int64) string {
 	return fmt.Sprintf("user/%d", id)
+}
+
+func (u *userRepository) bumpKey(id int64) string {
+	return fmt.Sprintf("user_dump/%d", id)
 }
