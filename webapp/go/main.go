@@ -284,11 +284,13 @@ type resSetting struct {
 }
 
 func accessLog(h func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, req *http.Request) {
-		t1 := time.Now()
-		h(w, req)
+	if DisableAccessLog {
+		return h
+	} else {
+		return func(w http.ResponseWriter, req *http.Request) {
+			t1 := time.Now()
+			h(w, req)
 
-		if !DisableAccessLog {
 			log.Printf("method:%s path:%s duration:%v", req.Method, req.URL.Path, time.Now().Sub(t1))
 		}
 	}
@@ -2042,8 +2044,9 @@ func postSell(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
-	_, err = tx.Exec("UPDATE `users` SET `num_sell_items` = ?, `last_bump` = ? WHERE `id` = ?",
-		seller.NumSellItems+1,
+	seller.NumSellItems += 1
+	seller.LastBump = now
+	_, err = tx.Exec("UPDATE `users` SET `num_sell_items` = `num_sell_items` + 1, `last_bump` = ? WHERE `id` = ?",
 		now,
 		seller.ID,
 	)
@@ -2054,7 +2057,7 @@ func postSell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tx.Commit()
-	UserRepository.Invalidate(seller.ID)
+	UserRepository.UpdateCache(seller)
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	json.NewEncoder(w).Encode(resSell{ID: itemID})
@@ -2132,6 +2135,7 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	seller.LastBump = now
 	_, err = tx.Exec("UPDATE `users` SET `last_bump` = ? WHERE `id` = ?",
 		now,
 		seller.ID,
@@ -2142,7 +2146,7 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tx.Commit()
-	UserRepository.Invalidate(seller.ID)
+	UserRepository.UpdateCache(seller)
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	json.NewEncoder(w).Encode(&resItemEdit{

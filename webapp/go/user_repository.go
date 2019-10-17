@@ -58,6 +58,10 @@ func (u *userRepository) Get(id int64) (*User, error) {
 	return user, nil
 }
 
+func (u *userRepository) UpdateCache(user *User) error {
+	return u.setCache(user)
+}
+
 func (u *userRepository) Invalidate(id int64) error {
 	return u.client.Delete(u.key(id))
 }
