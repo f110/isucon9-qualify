@@ -78,6 +78,7 @@ var (
 
 	UserRepository   *userRepository
 	DisableAccessLog bool
+	DisableQueryLog  bool
 )
 
 type Config struct {
@@ -361,6 +362,7 @@ func main() {
 	campaign := Campaign
 	flag.IntVar(&campaign, "campaign", Campaign, "Campaign")
 	flag.BoolVar(&DisableAccessLog, "disable-access-log", false, "Do not show an access log")
+	flag.BoolVar(&DisableQueryLog, "disable-query-log", false, "Do not show a query log")
 	flag.Parse()
 	configuredCampaign = campaign
 
@@ -375,14 +377,18 @@ func main() {
 
 	querylog.InitWithStandardLogger(log.New(os.Stderr, "", log.Ldate|log.Ltime))
 	querylog.SetMinimumDuration(10 * time.Millisecond)
-	dbx, err = sqlx.Open("querylog", dsn)
+	driver := "querylog"
+	if DisableQueryLog {
+		driver = "mysql"
+	}
+	dbx, err = sqlx.Open(driver, dsn)
 	if err != nil {
 		log.Fatalf("failed to connect to DB: %s.", err.Error())
 	}
 	defer dbx.Close()
 	dbx.SetMaxIdleConns(10000)
 
-	UserRepository = NewUserRepository(dbx, "localhost:11211")
+	UserRepository = NewUserRepository(dbx, "localhost:11212")
 
 	mux := &mux{goji.NewMux()}
 
