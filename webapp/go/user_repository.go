@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"log"
@@ -16,21 +15,43 @@ import (
 type userRepository struct {
 	dbx    *sqlx.DB
 	client *memcache.Client
+}
 
-	bufPool *sync.Pool
+type userContext struct {
+	data *sync.Map
+}
+
+func (c *userContext) Get(id int64) (*User, bool) {
+	v, ok := c.data.Load(id)
+	if !ok {
+		return nil, false
+	}
+
+	return v.(*User), true
+}
+
+func (c *userContext) Set(user *User) {
+	c.data.Store(user.ID, user)
 }
 
 func NewUserRepository(dbx *sqlx.DB, client *memcache.Client) *userRepository {
 	return &userRepository{
 		dbx:    dbx,
 		client: client,
-		bufPool: &sync.Pool{New: func() interface{} {
-			return new(bytes.Buffer)
-		}},
 	}
 }
 
-func (u *userRepository) Get(id int64) (*User, error) {
+func (u *userRepository) GetContext() *userContext {
+	return &userContext{data: &sync.Map{}}
+}
+
+func (u *userRepository) Get(ctx *userContext, id int64) (*User, error) {
+	if ctx != nil {
+		if v, ok := ctx.Get(id); ok {
+			return v, nil
+		}
+	}
+
 	item, err := u.client.Get(u.key(id))
 	if err != nil && err != memcache.ErrCacheMiss {
 		log.Print(err)
@@ -45,7 +66,7 @@ func (u *userRepository) Get(id int64) (*User, error) {
 
 		l, _ := types.TimestampFromProto(c.LastBump)
 		ca, _ := types.TimestampFromProto(c.CreatedAt)
-		return &User{
+		user := &User{
 			ID:             c.Id,
 			AccountName:    c.AccountName,
 			HashedPassword: c.HashedPassword,
@@ -53,7 +74,11 @@ func (u *userRepository) Get(id int64) (*User, error) {
 			NumSellItems:   int(c.NumSellItems),
 			LastBump:       l,
 			CreatedAt:      ca,
-		}, nil
+		}
+		if ctx != nil {
+			ctx.Set(user)
+		}
+		return user, nil
 	}
 
 	user := &User{}
@@ -67,6 +92,9 @@ func (u *userRepository) Get(id int64) (*User, error) {
 		return nil, err
 	}
 
+	if ctx != nil {
+		ctx.Set(user)
+	}
 	return user, nil
 }
 

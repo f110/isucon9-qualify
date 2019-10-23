@@ -531,7 +531,7 @@ func getUser(r *http.Request) (user User, errCode int, errMsg string) {
 		return user, http.StatusInternalServerError, "can not convert user id"
 	}
 
-	u, err := UserRepository.Get(id)
+	u, err := UserRepository.Get(nil, id)
 	if err != nil {
 		log.Print(err)
 		return user, http.StatusInternalServerError, "can not find user"
@@ -541,8 +541,8 @@ func getUser(r *http.Request) (user User, errCode int, errMsg string) {
 	return user, http.StatusOK, ""
 }
 
-func getUserSimpleByID(q sqlx.Queryer, userID int64) (userSimple UserSimple, err error) {
-	user, err := UserRepository.Get(userID)
+func getUserSimpleByID(ctx *userContext, userID int64) (userSimple UserSimple, err error) {
+	user, err := UserRepository.Get(ctx, userID)
 	if err != nil {
 		return userSimple, err
 	}
@@ -723,8 +723,9 @@ func getNewItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	itemSimples := make([]ItemSimple, 0)
+	ctx := UserRepository.GetContext()
 	for _, item := range items {
-		seller, err := getUserSimpleByID(dbx, item.SellerID)
+		seller, err := getUserSimpleByID(ctx, item.SellerID)
 		if err != nil {
 			log.Print(err)
 			outputErrorMsg(w, http.StatusNotFound, "seller not found")
@@ -851,8 +852,9 @@ func getNewCategoryItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	itemSimples := make([]ItemSimple, 0)
+	ctx := UserRepository.GetContext()
 	for _, item := range items {
-		seller, err := getUserSimpleByID(dbx, item.SellerID)
+		seller, err := getUserSimpleByID(ctx, item.SellerID)
 		if err != nil {
 			log.Print(err)
 			outputErrorMsg(w, http.StatusNotFound, "seller not found")
@@ -903,7 +905,7 @@ func getUserItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userSimple, err := getUserSimpleByID(dbx, userID)
+	userSimple, err := getUserSimpleByID(nil, userID)
 	if err != nil {
 		outputErrorMsg(w, http.StatusNotFound, "user not found")
 		return
@@ -1065,8 +1067,9 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	itemDetails := make([]ItemDetail, 0, len(items))
+	ctx := UserRepository.GetContext()
 	for _, item := range items {
-		seller, err := getUserSimpleByID(dbx, item.SellerID)
+		seller, err := getUserSimpleByID(ctx, item.SellerID)
 		if err != nil {
 			outputErrorMsg(w, http.StatusNotFound, "seller not found")
 			return
@@ -1097,7 +1100,7 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if item.BuyerID != 0 {
-			buyer, err := getUserSimpleByID(dbx, item.BuyerID)
+			buyer, err := getUserSimpleByID(nil, item.BuyerID)
 			if err != nil {
 				outputErrorMsg(w, http.StatusNotFound, "buyer not found")
 				return
@@ -1201,7 +1204,7 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	seller, err := getUserSimpleByID(dbx, item.SellerID)
+	seller, err := getUserSimpleByID(nil, item.SellerID)
 	if err != nil {
 		outputErrorMsg(w, http.StatusNotFound, "seller not found")
 		return
@@ -1227,7 +1230,7 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if (user.ID == item.SellerID || user.ID == item.BuyerID) && item.BuyerID != 0 {
-		buyer, err := getUserSimpleByID(dbx, item.BuyerID)
+		buyer, err := getUserSimpleByID(nil, item.BuyerID)
 		if err != nil {
 			outputErrorMsg(w, http.StatusNotFound, "buyer not found")
 			return
@@ -1443,7 +1446,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	seller, err := UserRepository.Get(targetItem.SellerID)
+	seller, err := UserRepository.Get(nil, targetItem.SellerID)
 	if err != nil {
 		outputErrorMsg(w, http.StatusNotFound, "seller not found")
 		return
@@ -2090,7 +2093,7 @@ func postSell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	seller, err := UserRepository.Get(user.ID)
+	seller, err := UserRepository.Get(nil, user.ID)
 	if err != nil {
 		outputErrorMsg(w, http.StatusNotFound, "user not found")
 		return
@@ -2182,7 +2185,7 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	seller, err := UserRepository.Get(user.ID)
+	seller, err := UserRepository.Get(nil, user.ID)
 	if err != nil {
 		outputErrorMsg(w, http.StatusNotFound, "user not found")
 		return
