@@ -7,8 +7,8 @@ import (
 	"log"
 	"sync"
 
-	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/jmoiron/sqlx"
+	"github.com/rainycape/memcache"
 )
 
 type transactionEvidenceRepository struct {
@@ -64,7 +64,7 @@ func (t *transactionEvidenceRepository) Invalidate(id int64) error {
 }
 
 func (t *transactionEvidenceRepository) Flush() {
-	t.client.FlushAll()
+	t.client.Flush(0)
 }
 
 func (t *transactionEvidenceRepository) setCache(transactionEvidence *TransactionEvidence) error {

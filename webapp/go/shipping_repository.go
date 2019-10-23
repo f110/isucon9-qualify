@@ -7,8 +7,8 @@ import (
 	"log"
 	"sync"
 
-	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/jmoiron/sqlx"
+	"github.com/rainycape/memcache"
 )
 
 type shippingRepository struct {
@@ -65,7 +65,7 @@ func (s *shippingRepository) Invalidate(id int64) error {
 }
 
 func (s *shippingRepository) Flush() {
-	s.client.FlushAll()
+	s.client.Flush(0)
 }
 
 func (s *shippingRepository) setCache(shipping *Shipping) error {

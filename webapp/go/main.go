@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	crand "crypto/rand"
 	"database/sql"
 	"encoding/json"
@@ -13,17 +14,20 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
-	"github.com/bradfitz/gomemcache/memcache"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
 	"github.com/isucon/isucon9-qualify/webapp/go/querylog"
 	"github.com/jmoiron/sqlx"
+	"github.com/rainycape/memcache"
 	goji "goji.io"
 	"goji.io/pat"
 	"golang.org/x/crypto/bcrypt"
@@ -338,6 +342,18 @@ func init() {
 	})
 }
 
+func handleSignal(ctx context.Context, cancelFunc context.CancelFunc, ch chan os.Signal) {
+	for {
+		select {
+		case <-ch:
+			cancelFunc()
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 func main() {
 	host := os.Getenv("MYSQL_HOST")
 	if host == "" {
@@ -365,11 +381,25 @@ func main() {
 	}
 
 	campaign := Campaign
+	cpuprofile := ""
 	flag.IntVar(&campaign, "campaign", Campaign, "Campaign")
 	flag.BoolVar(&DisableAccessLog, "disable-access-log", false, "Do not show an access log")
 	flag.BoolVar(&DisableQueryLog, "disable-query-log", false, "Do not show a query log")
+	flag.StringVar(&cpuprofile, "cpuprofile", "", "CPU Profile")
 	flag.Parse()
 	configuredCampaign = campaign
+
+	if cpuprofile != "" {
+		f, err := os.Create(cpuprofile)
+		if err != nil {
+			log.Fatal("could not create CPU profile: ", err)
+		}
+		defer f.Close()
+		if err := pprof.StartCPUProfile(f); err != nil {
+			log.Fatal("could not start CPU profile: ", err)
+		}
+		defer pprof.StopCPUProfile()
+	}
 
 	dsn := fmt.Sprintf(
 		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=Local",
@@ -393,8 +423,11 @@ func main() {
 	defer dbx.Close()
 	dbx.SetMaxIdleConns(10000)
 
-	client := memcache.New("localhost:11212")
-	client.MaxIdleConns = 10000
+	client, err := memcache.New("localhost:11212")
+	if err != nil {
+		log.Fatalf("failed to connecto memcached: %s", err)
+	}
+	client.SetMaxIdleConnsPerAddr(10000)
 	UserRepository = NewUserRepository(dbx, client)
 	ItemRepository = NewItemRepository(dbx, client)
 	TransactionEvidenceRepository = NewTransactionEvidenceRepository(dbx, client)
@@ -439,7 +472,34 @@ func main() {
 	// Assets
 	mux.Handle(pat.Get("/*"), http.FileServer(http.Dir("../public")))
 
-	log.Fatal(http.ListenAndServe(":8000", mux))
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
+
+	s := &http.Server{
+		Addr:    ":8000",
+		Handler: mux,
+	}
+
+	signalCh := make(chan os.Signal)
+	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
+	go handleSignal(ctx, cancelFunc, signalCh)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		s.ListenAndServe()
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		<-ctx.Done()
+		s.Shutdown(context.Background())
+	}()
+	wg.Wait()
 }
 
 func getSession(r *http.Request) *sessions.Session {

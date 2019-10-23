@@ -1,0 +1,15 @@
+syntax = "proto3";
+package db;
+option go_package = "main";
+
+import "google/protobuf/timestamp.proto";
+
+message UserCache {
+    int64 id = 1;
+    string account_name = 2;
+    bytes hashed_password = 3;
+    string address = 4;
+    int32 num_sell_items = 5;
+    google.protobuf.Timestamp last_bump = 6;
+    google.protobuf.Timestamp created_at = 7;
+}

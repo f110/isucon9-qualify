@@ -2,14 +2,15 @@ package main
 
 import (
 	"bytes"
-	"encoding/gob"
 	"errors"
 	"fmt"
 	"log"
 	"sync"
 
-	"github.com/bradfitz/gomemcache/memcache"
+	"github.com/gogo/protobuf/types"
+
 	"github.com/jmoiron/sqlx"
+	"github.com/rainycape/memcache"
 )
 
 type userRepository struct {
@@ -36,14 +37,26 @@ func (u *userRepository) Get(id int64) (*User, error) {
 		return nil, err
 	}
 
-	user := &User{}
 	if item != nil {
-		if err := gob.NewDecoder(bytes.NewReader(item.Value)).Decode(user); err != nil {
+		c := &UserCache{}
+		if err := c.Unmarshal(item.Value); err != nil {
 			return nil, err
 		}
-		return user, nil
+
+		l, _ := types.TimestampFromProto(c.LastBump)
+		ca, _ := types.TimestampFromProto(c.CreatedAt)
+		return &User{
+			ID:             c.Id,
+			AccountName:    c.AccountName,
+			HashedPassword: c.HashedPassword,
+			Address:        c.Address,
+			NumSellItems:   int(c.NumSellItems),
+			LastBump:       l,
+			CreatedAt:      ca,
+		}, nil
 	}
 
+	user := &User{}
 	err = dbx.Get(user, "SELECT * FROM `users` WHERE `id` = ?", id)
 	if err != nil {
 		log.Print(err)
@@ -66,7 +79,7 @@ func (u *userRepository) Invalidate(id int64) error {
 }
 
 func (u *userRepository) Flush() {
-	u.client.FlushAll()
+	u.client.Flush(0)
 }
 
 func (u *userRepository) LastBump(id int64) error {
@@ -83,17 +96,23 @@ func (u *userRepository) Bump(id int64) error {
 }
 
 func (u *userRepository) setCache(user *User) error {
-	buf := u.bufPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer func() {
-		u.bufPool.Put(buf)
-	}()
-
-	if err := gob.NewEncoder(buf).Encode(user); err != nil {
-		return nil
+	l, _ := types.TimestampProto(user.LastBump)
+	c, _ := types.TimestampProto(user.CreatedAt)
+	v := &UserCache{
+		Id:             user.ID,
+		AccountName:    user.AccountName,
+		HashedPassword: user.HashedPassword,
+		Address:        user.Address,
+		NumSellItems:   int32(user.NumSellItems),
+		LastBump:       l,
+		CreatedAt:      c,
+	}
+	b, err := v.Marshal()
+	if err != nil {
+		return err
 	}
 
-	return u.client.Set(&memcache.Item{Key: u.key(user.ID), Value: buf.Bytes()})
+	return u.client.Set(&memcache.Item{Key: u.key(user.ID), Value: b})
 }
 
 func (u *userRepository) key(id int64) string {
