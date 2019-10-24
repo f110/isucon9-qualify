@@ -43,3 +43,18 @@ message ItemCache {
     google.protobuf.Timestamp created_at = 10;
     google.protobuf.Timestamp updated_at = 11;
 }
+
+message TransactionEvidenceCache {
+    int64 id = 1;
+    int64 seller_id = 2;
+    int64 buyer_id = 3;
+    string status = 4;
+    int64 item_id = 5;
+    string item_name = 6;
+    int32 item_price = 7;
+    string item_description = 8;
+    int32 item_category_id = 9;
+    int32 item_root_category_id = 10;
+    google.protobuf.Timestamp created_at = 11;
+    google.protobuf.Timestamp updated_at = 12;
+}

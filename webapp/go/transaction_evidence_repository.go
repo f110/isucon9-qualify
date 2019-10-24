@@ -2,10 +2,11 @@ package main
 
 import (
 	"bytes"
-	"encoding/gob"
 	"fmt"
 	"log"
 	"sync"
+
+	"github.com/gogo/protobuf/types"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/rainycape/memcache"
@@ -34,14 +35,31 @@ func (t *transactionEvidenceRepository) Get(itemId int64) (*TransactionEvidence,
 		return nil, err
 	}
 
-	transactionEvidence := &TransactionEvidence{}
 	if item != nil {
-		if err := gob.NewDecoder(bytes.NewBuffer(item.Value)).Decode(transactionEvidence); err != nil {
+		c := &TransactionEvidenceCache{}
+		if err := c.Unmarshal(item.Value); err != nil {
 			return nil, err
 		}
-		return transactionEvidence, nil
+
+		ca, _ := types.TimestampFromProto(c.CreatedAt)
+		ua, _ := types.TimestampFromProto(c.UpdatedAt)
+		return &TransactionEvidence{
+			ID:                 c.Id,
+			SellerID:           c.SellerId,
+			BuyerID:            c.BuyerId,
+			Status:             c.Status,
+			ItemID:             c.ItemId,
+			ItemName:           c.ItemName,
+			ItemPrice:          int(c.ItemPrice),
+			ItemDescription:    c.ItemDescription,
+			ItemCategoryID:     int(c.ItemCategoryId),
+			ItemRootCategoryID: int(c.ItemRootCategoryId),
+			CreatedAt:          ca,
+			UpdatedAt:          ua,
+		}, nil
 	}
 
+	transactionEvidence := &TransactionEvidence{}
 	err = dbx.Get(transactionEvidence, "SELECT * FROM `transaction_evidences` WHERE `item_id` = ?", itemId)
 	if err != nil {
 		log.Print(err)
@@ -68,17 +86,28 @@ func (t *transactionEvidenceRepository) Flush() {
 }
 
 func (t *transactionEvidenceRepository) setCache(transactionEvidence *TransactionEvidence) error {
-	buf := t.bufPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer func() {
-		t.bufPool.Put(buf)
-	}()
-
-	if err := gob.NewEncoder(buf).Encode(transactionEvidence); err != nil {
-		return nil
+	ca, _ := types.TimestampProto(transactionEvidence.CreatedAt)
+	ua, _ := types.TimestampProto(transactionEvidence.UpdatedAt)
+	c := &TransactionEvidenceCache{
+		Id:                 transactionEvidence.ID,
+		SellerId:           transactionEvidence.SellerID,
+		BuyerId:            transactionEvidence.BuyerID,
+		Status:             transactionEvidence.Status,
+		ItemId:             transactionEvidence.ItemID,
+		ItemName:           transactionEvidence.ItemName,
+		ItemPrice:          int32(transactionEvidence.ItemPrice),
+		ItemDescription:    transactionEvidence.ItemDescription,
+		ItemCategoryId:     int32(transactionEvidence.ItemCategoryID),
+		ItemRootCategoryId: int32(transactionEvidence.ItemRootCategoryID),
+		CreatedAt:          ca,
+		UpdatedAt:          ua,
 	}
 
-	return t.client.Set(&memcache.Item{Key: t.key(transactionEvidence.ItemID), Value: buf.Bytes()})
+	b, err := c.Marshal()
+	if err != nil {
+		return err
+	}
+	return t.client.Set(&memcache.Item{Key: t.key(transactionEvidence.ItemID), Value: b})
 }
 
 func (t *transactionEvidenceRepository) key(id int64) string {
