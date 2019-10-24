@@ -59,21 +59,9 @@ func (u *userRepository) Get(ctx *userContext, id int64) (*User, error) {
 	}
 
 	if item != nil {
-		c := &UserCache{}
-		if err := c.Unmarshal(item.Value); err != nil {
+		user, err := u.decode(item)
+		if err != nil {
 			return nil, err
-		}
-
-		l, _ := types.TimestampFromProto(c.LastBump)
-		ca, _ := types.TimestampFromProto(c.CreatedAt)
-		user := &User{
-			ID:             c.Id,
-			AccountName:    c.AccountName,
-			HashedPassword: c.HashedPassword,
-			Address:        c.Address,
-			NumSellItems:   int(c.NumSellItems),
-			LastBump:       l,
-			CreatedAt:      ca,
 		}
 		if ctx != nil {
 			ctx.Set(user)
@@ -96,6 +84,62 @@ func (u *userRepository) Get(ctx *userContext, id int64) (*User, error) {
 		ctx.Set(user)
 	}
 	return user, nil
+}
+
+func (u *userRepository) GetMulti(ids ...int64) (map[int64]*User, error) {
+	unique := make(map[int64]struct{})
+	for _, i := range ids {
+		unique[i] = struct{}{}
+	}
+
+	keys := make([]string, 0, len(unique))
+	for v, _ := range unique {
+		keys = append(keys, u.key(v))
+	}
+	items, err := u.client.GetMulti(keys)
+	if err != nil {
+		return nil, err
+	}
+
+	res := make(map[int64]*User)
+	for _, v := range items {
+		c, err := u.decode(v)
+		if err != nil {
+			return nil, err
+		}
+		res[c.ID] = c
+	}
+
+	if len(res) != len(unique) {
+		willFetchIds := make([]int64, 0, len(unique))
+		for _, v := range ids {
+			if _, ok := res[v]; !ok {
+				willFetchIds = append(willFetchIds, v)
+			}
+		}
+		if len(willFetchIds) == 0 {
+			return res, nil
+		}
+
+		log.Print("SELECT DB")
+		q, args, err := sqlx.In("SELECT * FROM `users` WHERE `id` IN (?)", willFetchIds)
+		if err != nil {
+			return nil, err
+		}
+		users := make([]*User, 0)
+		if err := dbx.Select(&users, q, args...); err != nil {
+			return nil, err
+		}
+
+		for _, user := range users {
+			res[user.ID] = user
+			if err := u.setCache(user); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return res, nil
 }
 
 func (u *userRepository) UpdateCache(user *User) error {
@@ -149,4 +193,24 @@ func (u *userRepository) key(id int64) string {
 
 func (u *userRepository) bumpKey(id int64) string {
 	return fmt.Sprintf("user_dump/%d", id)
+}
+
+func (u *userRepository) decode(item *memcache.Item) (*User, error) {
+	c := &UserCache{}
+	if err := c.Unmarshal(item.Value); err != nil {
+		return nil, err
+	}
+
+	l, _ := types.TimestampFromProto(c.LastBump)
+	ca, _ := types.TimestampFromProto(c.CreatedAt)
+	user := &User{
+		ID:             c.Id,
+		AccountName:    c.AccountName,
+		HashedPassword: c.HashedPassword,
+		Address:        c.Address,
+		NumSellItems:   int(c.NumSellItems),
+		LastBump:       l,
+		CreatedAt:      ca,
+	}
+	return user, nil
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -50,7 +51,7 @@ type APIShipmentStatusReq struct {
 	ReserveID string `json:"reserve_id"`
 }
 
-func APIPaymentToken(paymentURL string, param *APIPaymentServiceTokenReq) (*APIPaymentServiceTokenRes, error) {
+func APIPaymentToken(ctx context.Context, paymentURL string, param *APIPaymentServiceTokenReq) (*APIPaymentServiceTokenRes, error) {
 	b, _ := json.Marshal(param)
 
 	req, err := http.NewRequest(http.MethodPost, paymentURL+"/token", bytes.NewBuffer(b))
@@ -84,7 +85,7 @@ func APIPaymentToken(paymentURL string, param *APIPaymentServiceTokenReq) (*APIP
 	return pstr, nil
 }
 
-func APIShipmentCreate(shipmentURL string, param *APIShipmentCreateReq) (*APIShipmentCreateRes, error) {
+func APIShipmentCreate(ctx context.Context, shipmentURL string, param *APIShipmentCreateReq) (*APIShipmentCreateRes, error) {
 	b, _ := json.Marshal(param)
 
 	req, err := http.NewRequest(http.MethodPost, shipmentURL+"/create", bytes.NewBuffer(b))
@@ -119,7 +120,7 @@ func APIShipmentCreate(shipmentURL string, param *APIShipmentCreateReq) (*APIShi
 	return scr, nil
 }
 
-func APIShipmentRequest(shipmentURL string, param *APIShipmentRequestReq) ([]byte, error) {
+func APIShipmentRequest(ctx context.Context, shipmentURL string, param *APIShipmentRequestReq) ([]byte, error) {
 	b, _ := json.Marshal(param)
 
 	req, err := http.NewRequest(http.MethodPost, shipmentURL+"/request", bytes.NewBuffer(b))
@@ -148,7 +149,7 @@ func APIShipmentRequest(shipmentURL string, param *APIShipmentRequestReq) ([]byt
 	return ioutil.ReadAll(res.Body)
 }
 
-func APIShipmentStatus(shipmentURL string, param *APIShipmentStatusReq) (*APIShipmentStatusRes, error) {
+func APIShipmentStatus(ctx context.Context, shipmentURL string, param *APIShipmentStatusReq) (*APIShipmentStatusRes, error) {
 	b, _ := json.Marshal(param)
 
 	req, err := http.NewRequest(http.MethodGet, shipmentURL+"/status", bytes.NewBuffer(b))

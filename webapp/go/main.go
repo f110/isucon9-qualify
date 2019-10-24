@@ -851,24 +851,33 @@ func getNewCategoryItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	itemSimples := make([]ItemSimple, 0)
-	ctx := UserRepository.GetContext()
+	userIds := make([]int64, 0)
 	for _, item := range items {
-		seller, err := getUserSimpleByID(ctx, item.SellerID)
-		if err != nil {
-			log.Print(err)
-			outputErrorMsg(w, http.StatusNotFound, "seller not found")
-			return
-		}
+		userIds = append(userIds, item.SellerID)
+	}
+	users, err := UserRepository.GetMulti(userIds...)
+	if err != nil {
+		log.Print(err)
+		outputErrorMsg(w, http.StatusInternalServerError, "seller not found")
+		return
+	}
+
+	itemSimples := make([]ItemSimple, 0)
+	for _, item := range items {
+		seller := users[item.SellerID]
 		category, err := getCategoryByID(item.CategoryID)
 		if err != nil {
 			outputErrorMsg(w, http.StatusNotFound, "category not found")
 			return
 		}
 		itemSimples = append(itemSimples, ItemSimple{
-			ID:         item.ID,
-			SellerID:   item.SellerID,
-			Seller:     &seller,
+			ID:       item.ID,
+			SellerID: item.SellerID,
+			Seller: &UserSimple{
+				ID:           seller.ID,
+				AccountName:  seller.AccountName,
+				NumSellItems: seller.NumSellItems,
+			},
 			Status:     item.Status,
 			Name:       item.Name,
 			Price:      item.Price,
@@ -1139,7 +1148,7 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 			case ShippingsStatusDone:
 				shippingStatus = ShippingsStatusDone
 			default:
-				ssr, err := APIShipmentStatus(getShipmentServiceURL(), &APIShipmentStatusReq{
+				ssr, err := APIShipmentStatus(r.Context(), getShipmentServiceURL(), &APIShipmentStatusReq{
 					ReserveID: shipping.ReserveID,
 				})
 				if err != nil {
@@ -1543,7 +1552,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 
-		scr, err = APIShipmentCreate(getShipmentServiceURL(), &APIShipmentCreateReq{
+		scr, err = APIShipmentCreate(r.Context(), getShipmentServiceURL(), &APIShipmentCreateReq{
 			ToAddress:   buyer.Address,
 			ToName:      buyer.AccountName,
 			FromAddress: seller.Address,
@@ -1562,7 +1571,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 
-		pstr, err := APIPaymentToken(getPaymentServiceURL(), &APIPaymentServiceTokenReq{
+		pstr, err := APIPaymentToken(r.Context(), getPaymentServiceURL(), &APIPaymentServiceTokenReq{
 			ShopID: PaymentServiceIsucariShopID,
 			Token:  rb.Token,
 			APIKey: PaymentServiceIsucariAPIKey,
@@ -1710,7 +1719,7 @@ func postShip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	img, err := APIShipmentRequest(getShipmentServiceURL(), &APIShipmentRequestReq{
+	img, err := APIShipmentRequest(r.Context(), getShipmentServiceURL(), &APIShipmentRequestReq{
 		ReserveID: shipping.ReserveID,
 	})
 	if err != nil {
@@ -1817,7 +1826,7 @@ func postShipDone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ssr, err := APIShipmentStatus(getShipmentServiceURL(), &APIShipmentStatusReq{
+	ssr, err := APIShipmentStatus(r.Context(), getShipmentServiceURL(), &APIShipmentStatusReq{
 		ReserveID: shipping.ReserveID,
 	})
 	if err != nil {
@@ -1939,7 +1948,7 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ssr, err := APIShipmentStatus(getShipmentServiceURL(), &APIShipmentStatusReq{
+	ssr, err := APIShipmentStatus(r.Context(), getShipmentServiceURL(), &APIShipmentStatusReq{
 		ReserveID: shipping.ReserveID,
 	})
 	if err != nil {
