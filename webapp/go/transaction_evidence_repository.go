@@ -78,7 +78,7 @@ func (t *transactionEvidenceRepository) setCache(transactionEvidence *Transactio
 		return nil
 	}
 
-	return t.client.Set(&memcache.Item{Key: t.key(transactionEvidence.ID), Value: buf.Bytes()})
+	return t.client.Set(&memcache.Item{Key: t.key(transactionEvidence.ItemID), Value: buf.Bytes()})
 }
 
 func (t *transactionEvidenceRepository) key(id int64) string {
