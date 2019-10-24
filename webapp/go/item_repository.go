@@ -2,10 +2,11 @@ package main
 
 import (
 	"bytes"
-	"encoding/gob"
 	"fmt"
 	"log"
 	"sync"
+
+	"github.com/gogo/protobuf/types"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/rainycape/memcache"
@@ -34,14 +35,29 @@ func (i *itemRepository) Get(id int64) (*Item, error) {
 		return nil, err
 	}
 
-	itemObj := &Item{}
 	if item != nil {
-		if err := gob.NewDecoder(bytes.NewBuffer(item.Value)).Decode(itemObj); err != nil {
+		c := &ItemCache{}
+		if err := c.Unmarshal(item.Value); err != nil {
 			return nil, err
 		}
-		return itemObj, nil
+		ca, _ := types.TimestampFromProto(c.CreatedAt)
+		ua, _ := types.TimestampFromProto(c.UpdatedAt)
+		return &Item{
+			ID:          c.Id,
+			SellerID:    c.SellerId,
+			BuyerID:     c.BuyerId,
+			Status:      c.Status,
+			Name:        c.Name,
+			Price:       int(c.Price),
+			Description: c.Description,
+			ImageName:   c.ImageName,
+			CategoryID:  int(c.CategoryId),
+			CreatedAt:   ca,
+			UpdatedAt:   ua,
+		}, nil
 	}
 
+	itemObj := &Item{}
 	err = dbx.Get(itemObj, "SELECT * FROM `items` WHERE `id` = ?", id)
 	if err != nil {
 		log.Print(err)
@@ -68,17 +84,28 @@ func (i *itemRepository) Flush() {
 }
 
 func (i *itemRepository) setCache(item *Item) error {
-	buf := i.bufPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer func() {
-		i.bufPool.Put(buf)
-	}()
-
-	if err := gob.NewEncoder(buf).Encode(item); err != nil {
-		return nil
+	ca, _ := types.TimestampProto(item.CreatedAt)
+	ua, _ := types.TimestampProto(item.UpdatedAt)
+	c := &ItemCache{
+		Id:          item.ID,
+		SellerId:    item.SellerID,
+		BuyerId:     item.BuyerID,
+		Status:      item.Status,
+		Name:        item.Name,
+		Price:       int32(item.Price),
+		Description: item.Description,
+		ImageName:   item.ImageName,
+		CategoryId:  int32(item.CategoryID),
+		CreatedAt:   ca,
+		UpdatedAt:   ua,
 	}
 
-	return i.client.Set(&memcache.Item{Key: i.key(item.ID), Value: buf.Bytes()})
+	b, err := c.Marshal()
+	if err != nil {
+		return err
+	}
+
+	return i.client.Set(&memcache.Item{Key: i.key(item.ID), Value: b})
 }
 
 func (i *itemRepository) key(id int64) string {
