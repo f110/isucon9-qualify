@@ -844,7 +844,6 @@ func getNewCategoryItems(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]Item, 0)
 	err = dbx.Select(&items, inQuery, inArgs...)
-
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
@@ -1470,6 +1469,16 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tx := dbx.MustBegin()
+	te := &TransactionEvidence{
+		SellerID:           targetItem.SellerID,
+		BuyerID:            buyer.ID,
+		Status:             TransactionEvidenceStatusWaitShipping,
+		ItemID:             targetItem.ID,
+		ItemName:           targetItem.Name,
+		ItemPrice:          targetItem.Price,
+		ItemCategoryID:     category.ID,
+		ItemRootCategoryID: category.ParentID,
+	}
 	result, err := tx.Exec("INSERT INTO `transaction_evidences` (`seller_id`, `buyer_id`, `status`, `item_id`, `item_name`, `item_price`, `item_description`,`item_category_id`,`item_root_category_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		targetItem.SellerID,
 		buyer.ID,
@@ -1495,7 +1504,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		tx.Rollback()
 		return
 	}
-	TransactionEvidenceRepository.Invalidate(transactionEvidenceID)
+	te.ID = transactionEvidenceID
 
 	now := time.Now()
 	targetItem.BuyerID = buyer.ID
@@ -1519,6 +1528,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 	}
 	ItemRepository.UpdateCache(targetItem)
+	TransactionEvidenceRepository.UpdateCache(te)
 
 	rollbacked := false
 	rollback := func(itemId int64) {

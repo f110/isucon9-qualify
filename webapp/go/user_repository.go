@@ -121,7 +121,6 @@ func (u *userRepository) GetMulti(ids ...int64) (map[int64]*User, error) {
 			return res, nil
 		}
 
-		log.Print("SELECT DB")
 		q, args, err := sqlx.In("SELECT * FROM `users` WHERE `id` IN (?)", willFetchIds)
 		if err != nil {
 			return nil, err
