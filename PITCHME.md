@@ -218,7 +218,9 @@ func main() {
 
 ---
 
+@snap[north]
 ### 便利な引数をつけると
+@snapend
 
 @snap[midpoint snap-90]
 フルオプション
