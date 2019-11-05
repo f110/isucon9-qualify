@@ -70,10 +70,41 @@ $ memcached -m 1024 -c 10240
 
 ## アプリの変更
 
----?code=webapp/go/embed.go
-@title[categoriesの埋め込み]
+---
+
+### `categories` の埋め込み
 
 アプリ内から変更できないテーブルなのでソースコードに埋め込む
+
+@fa[arrow-down]
+
++++?code=webapp/go/embed.go
+
+@fa[arrow-down]
+
++++
+
+```go
+func init() {
+	categoryMap = make(map[int]*Category)
+	for _, v := range embedCategories {
+		categoryMap[v.ID] = v
+	}
+	for _, v := range categoryMap {
+		if v.ParentID != 0 {
+			v.ParentCategoryName = categoryMap[v.ParentID].CategoryName
+		}
+	}
+
+	categories = make([]Category, 0, len(categoryMap))
+	for _, v := range categoryMap {
+		categories = append(categories, *v)
+	}
+	sort.Slice(categories, func(i, j int) bool {
+		return categories[i].ID < categories[j].ID
+	})
+}
+```
 
 ---
 
