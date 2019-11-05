@@ -218,11 +218,8 @@ func main() {
 
 ---
 
-@snap[north]
 ### 便利な引数をつけると
-@snapend
 
-@snap[midpoint snap-90]
 フルオプション
 
 ```console
@@ -242,7 +239,6 @@ $ ./isucari -campaign 0
 ```
 
 ※campaignを下げてアクセス数を減らしてログを少しでも見やすく
-@snapend
 
 ---
 
