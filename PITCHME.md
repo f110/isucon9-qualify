@@ -22,12 +22,11 @@
 ### 最終ベストスコア
 
 ```
-2019/10/27 22:42:54 main.go:180: === final check ===
-2019/10/27 22:42:54 main.go:212: 61240 0
-{"pass":true,"score":61240,"campaign":5,"language":"Go","messages":[]}
+2019/10/27 22:23:44 main.go:180: === final check ===
+2019/10/27 22:23:44 main.go:212: 56600 0
 ```
 
-**61240**
+**56600**
 
 - MacBook Pro (15-inch, 2017)
 - Core i7 2.8GHz (2C4T)
@@ -178,6 +177,7 @@ func main() {
 
 +++
 
+@snap[midpoint snap-90]
 ```go
 func handleSignal(ctx context.Context, cancelFunc context.CancelFunc, ch chan os.Signal) {
 	for {
@@ -191,6 +191,7 @@ func handleSignal(ctx context.Context, cancelFunc context.CancelFunc, ch chan os
 	}
 }
 ```
+@snapend
 
 ---
 
@@ -201,6 +202,30 @@ func handleSignal(ctx context.Context, cancelFunc context.CancelFunc, ch chan os
 @fa[arrow-down]
 
 +++?code=webapp/go/querylog/querylog.go
+
+--
+
+### 便利な引数をつけると
+
+フルオプション
+
+```console
+$ ./isucari -campaign 4 -disable-access-log -disable-query-log -cpuprofile ./cpuprofile
+```
+
+一番パフォーマンスが高い
+
+```console
+$ ./isucari -campaign 4 -disable-access-log -disable-query-log
+```
+
+もっと細かく時間を見たい
+
+```console
+$ ./isucari -campaign 0
+```
+
+※campaignを下げてアクセス数を減らしてログを少しでも見やすく
 
 ---
 
@@ -461,6 +486,15 @@ CREATE TABLE `items` (
 
 ---
 
+### クエリチューニング
+
+- covering index等はほぼ使ってない
+- 参照をmemcachedに逃がしているのでここで頑張るより逃がす方向を考える
+- 不要なカラムを取らないのは有効
+  - 特に日本語が入ってるカラム
+
+---
+
 ### リファクタリング
 
 - cacheを通してDBへクエリする場合は `***Repository` を通すようにする（main.goからの分離）
@@ -471,13 +505,15 @@ CREATE TABLE `items` (
 
 ---
 
-### さらにリファクタリングするなら
+### さらに上を目指すなら
 
 - updateクエリを廃止してオブジェクトのsetterで対応したい（ORMの始まり）
   - 透過的にキャッシュを扱うには生クエリは生々しすぎる
 - `/new_items/:id.json` のキャッシュ
   - キャッシュ機構は作れる。がシリアライザが遅くて不採用。
   - isuconの文脈においてなのでサービスとしてスケールさせるなら多少遅くてもアリ。
+- bcryptのコストを下げる
+  - しかしコストを下げるには一度正しいパスワードが必要なので全ユーザのログインを待たないといけない
 
 ---
 
@@ -486,3 +522,5 @@ CREATE TABLE `items` (
 - 特に変なことはしてない
 - 通常のハイパフォーマンスAPIサーバーと同じアーキテクチャを採用
 - ロックを減らす・ロックの時間を短くする工夫を
+- `pprof` で取ったスタックトレースをflamegraphにしたものは役に立つ
+- なんでも詰め込める枠組みはあまり速くない。分かっているのであれば定義したほうがパフォーマンス上有利。
