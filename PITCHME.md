@@ -222,9 +222,11 @@ func main() {
 
 フルオプション
 
+@snap[midpoint snap-90]
 ```console
 $ ./isucari -campaign 4 -disable-access-log -disable-query-log -cpuprofile ./cpuprofile
 ```
+@snapend
 
 一番パフォーマンスが高い
 
