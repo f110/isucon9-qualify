@@ -92,6 +92,7 @@ $ memcached -m 1024 -c 10240
 
 +++
 
+@snap[north snap-100]
 ```go
 func accessLog(h func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	if DisableAccessLog {
@@ -106,6 +107,7 @@ func accessLog(h func(http.ResponseWriter, *http.Request)) func(http.ResponseWri
 	}
 }
 ```
+@snapend
 
 @[2](グローバル変数でロギングを切れるようにしておく。このグローバル変数はこのメソッドが呼び出される前に初期化が終わっている)
 
