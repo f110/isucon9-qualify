@@ -209,7 +209,12 @@ func main() {
 
 +++?code=webapp/go/querylog/querylog.go
 
---
++++
+
+- `github.com/go-sql-driver/mysql` をwrapした自作。
+- 一定以上時間がかかったクエリをログに出せる
+
+---
 
 ### 便利な引数をつけると
 
