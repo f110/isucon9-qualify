@@ -190,6 +190,12 @@ func handleSignal(ctx context.Context, cancelFunc context.CancelFunc, ch chan os
 		}
 	}
 }
+
+func main() {
+	signalCh := make(chan os.Signal)
+	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
+	go handleSignal(ctx, cancelFunc, signalCh)
+}
 ```
 @snapend
 
@@ -514,6 +520,7 @@ CREATE TABLE `items` (
   - isuconの文脈においてなのでサービスとしてスケールさせるなら多少遅くてもアリ。
 - bcryptのコストを下げる
   - しかしコストを下げるには一度正しいパスワードが必要なので全ユーザのログインを待たないといけない
+- sessionの値を定義（ `encoding/gob` をやめる）
 
 ---
 
