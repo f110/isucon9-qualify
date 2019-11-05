@@ -220,13 +220,12 @@ func main() {
 
 ### 便利な引数をつけると
 
+@snap[midpoint snap-90]
 フルオプション
 
-@snap[midpoint snap-90]
 ```console
 $ ./isucari -campaign 4 -disable-access-log -disable-query-log -cpuprofile ./cpuprofile
 ```
-@snapend
 
 一番パフォーマンスが高い
 
@@ -241,6 +240,7 @@ $ ./isucari -campaign 0
 ```
 
 ※campaignを下げてアクセス数を減らしてログを少しでも見やすく
+@snapend
 
 ---
 
