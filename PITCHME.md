@@ -92,7 +92,7 @@ $ memcached -m 1024 -c 10240
 
 +++
 
-@snap[north snap-100]
+@snap[midpoint snap-100]
 ```go
 func accessLog(h func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	if DisableAccessLog {
