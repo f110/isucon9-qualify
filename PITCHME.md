@@ -35,8 +35,6 @@
 - Go 1.13
 - MySQL 5.7
 
-That's all!
-
 ---
 
 ### MySQLのチューニング
@@ -64,11 +62,16 @@ $ memcached -m 1024 -c 10240
 
 ---
 
+ミドルウェアの変更はベンチマーカーを動かすためのものがほぼ全て
+
+他にも1台構成で動かす場合はアプリとベンチマーカーそれぞれでulimitを上げておく必要がある（Linux/macOSに関わらず）
+
+---
+
 ## アプリの変更
 
 ---?code=webapp/go/embed.go
-
-### `categories` の埋め込み
+@title[categoriesの埋め込み]
 
 アプリ内から変更できないテーブルなのでソースコードに埋め込む
 
@@ -96,20 +99,4 @@ CREATE TABLE `items` (
 ) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4;
 ```
 
-```sql
-CREATE TABLE `transaction_evidences` (
-  `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  `seller_id` bigint NOT NULL,
-  `buyer_id` bigint NOT NULL,
-  `status` enum('wait_shipping', 'wait_done', 'done') NOT NULL,
-  `item_id` bigint NOT NULL UNIQUE,
-  `item_name` varchar(191) NOT NULL,
-  `item_price` int unsigned NOT NULL,
-  `item_description` text NOT NULL,
-  `item_category_id` int unsigned NOT NULL,
-  `item_root_category_id` int unsigned NOT NULL,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_item_id (`item_id`)
-) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4;
-```
+@[14-15](seller_idとbuyer_idで絞りcreated_atで並び替えるクエリ狙い)
