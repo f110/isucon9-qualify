@@ -34,6 +34,7 @@
 
 - Go 1.13
 - MySQL 5.7
+- memcached 1.5.10
 
 ---
 
@@ -65,6 +66,130 @@ $ memcached -m 1024 -c 10240
 ミドルウェアの変更はベンチマーカーを動かすためのものがほぼ全て
 
 他にも1台構成で動かす場合はアプリとベンチマーカーそれぞれでulimitを上げておく必要がある（Linux/macOSに関わらず）
+
+---
+
+## チューニングのための工夫
+
+スコアは変わらないが変更箇所を特定したりするための工夫
+
+---
+
+## こんなことしないでStackdriver Profilerを使おう
+
+---
+
+### エンドポイントごとのレスポンスタイム
+
+@fa[arrow-down]
+
++++
+
+```go
+func accessLog(h func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+	if DisableAccessLog {
+		return h
+	} else {
+		return func(w http.ResponseWriter, req *http.Request) {
+			t1 := time.Now()
+			h(w, req)
+
+			log.Printf("method:%s path:%s duration:%v", req.Method, req.URL.Path, time.Now().Sub(t1))
+		}
+	}
+}
+```
+
+@[2](グローバル変数でロギングを切れるようにしておく。このグローバル変数はこのメソッドが呼び出される前に初期化が終わっている)
+
++++
+
+```go
+type mux struct {
+	*goji.Mux
+}
+
+func (m *mux) HandleFunc(p goji.Pattern, h func(http.ResponseWriter, *http.Request)) {
+	m.Mux.HandleFunc(p, accessLog(h))
+}
+
+func main() {
+	mux := &mux{goji.NewMux()}
+
+	// API
+	mux.HandleFunc(pat.Post("/initialize"), postInitialize)
+}
+```
+
+@[1-7](パスごとにaccessLogを挟むのが面倒なので一発で全てのエンドポイントに挟めるようする)
+
+---
+
+### CPU Profile
+
+コマンドライン引数をつけるだけでCPU Profileを取れるようにしておく
+
+```console
+$ go tool pprof -http=:8081 ./cpuprofile
+```
+
+このようにしてブラウザで閲覧することが多かった
+
+@fa[arrow-down]
+
++++
+
+```go
+func main() {
+	if cpuprofile != "" {
+		f, err := os.Create(cpuprofile)
+		if err != nil {
+			log.Fatal("could not create CPU profile: ", err)
+		}
+		defer f.Close()
+		if err := pprof.StartCPUProfile(f); err != nil {
+			log.Fatal("could not start CPU profile: ", err)
+		}
+		defer pprof.StopCPUProfile()
+	}
+}
+```
+
+@[2](引数でcpuprofileを指定したときだけそのパスにプロファイル結果を吐き出すようしておく)
+
+---
+
+### シグナルハンドリング
+
+ちゃんと終了しないとCPU Profileを取れないので
+
+@fa[arrow-down]
+
++++
+
+```go
+func handleSignal(ctx context.Context, cancelFunc context.CancelFunc, ch chan os.Signal) {
+	for {
+		select {
+		case <-ch:
+			cancelFunc()
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+```
+
+---
+
+### クエリの実行時間計測
+
+クエリの実行時間をアプリサイドから計測してログとして出力する
+
+@fa[arrow-down]
+
++++?code=webapp/go/querylog/querylog.go
 
 ---
 
@@ -106,6 +231,109 @@ func init() {
 }
 ```
 
+@[2-5](idでしか検索しないのでmapに詰め替えておく)
+@[6-10](ParentCategoryNameは事前にデータを作っておく。ここまで含めて埋め込んでおいてもいい)
+@[12-18](idの昇順で全件を返さないといけないので予めソートしておく)
+
+---
+
+### 全体的に
+
+- 参照は全てcacheにオフロード
+- レコードを変更したらcacheもupdateする
+
+---
+
+### `/new_items.json`
+
+- 全カテゴリの新着アイテムを返す
+
+@fa[arrow-down]
+
++++
+
+### userのN+1
+
+- cacheにオフロード
+- 同一ユーザの参照は1リクエストに1回
+  - リクエスト単位でオンメモリのキャッシュもしてる
+
+---
+
+### `/new_items/:root_category_id.json`
+
+- 各カテゴリの出品と購入済みのリストを返す
+- リストされるアイテムはそのままDBにクエリする
+
+@fa[arrow-down]
+
++++
+
+### userのN+1
+
+- cacheにオフロード
+
+---
+
+### `/users/transactions.json`
+
+- 自分が出品した or 購入したアイテムを返す
+
+@fa[arrow-down]
+
++++
+
+### トランザクション廃止
+
+- 参照しかしてないのでトランザクションは使わない
+- 自分のアイテムなので基本的にロックを取る必要がない
+
++++
+
+### userのN+1
+
+- cacheにオフロード
+
++++
+
+### shipmentサービスの呼び出し
+
+shipmentサービスにおけるstatusを確認するためにAPIを呼び出す
+
+- `shippings` のstatusを見るとサービスの向こう側のステータスを確認すべきか分かる
+  - `wait_pickup` `shipping` の時だけAPIを呼び出す
+
+---
+
+### `/items/edit`
+
+- アイテムの編集ができる
+
+@fa[arrow-down]
+
++++
+
+### 悲観的ロックをなくす
+
+- 悲観的ロックをなくす代わりにupdateのクエリにstatusも条件に加える
+  - `WHERE id = ? AND status = ?`
+  - 万全を期すなら price もクエリでチェックしたほうがいい
+  - これでロックを使わずに安全に変更がアトミックになる
+
+---
+
+### `/buy`
+
+- アイテムの購入
+
+@fa[arrow-down]
+
++++
+
+### 悲観的ロックの廃止
+
+- 元のクエリは `items` をロックして多重購入を防いでる
+
 ---
 
 ### インデックスの追加
@@ -131,3 +359,4 @@ CREATE TABLE `items` (
 ```
 
 @[14-15](seller_idとbuyer_idで絞りcreated_atで並び替えるクエリ狙い)
+@[16](created_atでソートされるクエリ狙い)
