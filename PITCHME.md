@@ -107,12 +107,13 @@ func accessLog(h func(http.ResponseWriter, *http.Request)) func(http.ResponseWri
 	}
 }
 ```
-@snapend
 
 @[2](グローバル変数でロギングを切れるようにしておく。このグローバル変数はこのメソッドが呼び出される前に初期化が終わっている)
+@snapend
 
 +++
 
+@snap[midpoint snap-80]
 ```go
 type mux struct {
 	*goji.Mux
@@ -131,6 +132,7 @@ func main() {
 ```
 
 @[1-7](パスごとにaccessLogを挟むのが面倒なので一発で全てのエンドポイントに挟めるようする)
+@snapend
 
 ---
 
