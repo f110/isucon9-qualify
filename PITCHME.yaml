@@ -1,1 +1,13 @@
 transition: fade
+theme            : template
+
+theme-background : [ "#5289F7" ]
+theme-headline   : [ "Work Sans", "white", "none" ]
+theme-byline     : [ "Work Sans", "black", "none" ]
+theme-text       : [ "Lato", "#F5FFFA", "none" ]
+theme-links      : [ "#FF851B", "#E27924" ]
+theme-code       : [ "Inconsolata" ]
+theme-controls   : [ "#484848" ]
+theme-margins    : [ "0", "15px" ]
+
+highlight        : ir-black
