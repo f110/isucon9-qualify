@@ -538,3 +538,7 @@ CREATE TABLE `items` (
 - ロックを減らす・ロックの時間を短くする工夫を
 - `pprof` で取ったスタックトレースをflamegraphにしたものは役に立つ
 - なんでも詰め込める枠組みはあまり速くない。分かっているのであれば定義したほうがパフォーマンス上有利。
+
+---
+
+## ここまでの全てを反映した [差分はこれ](https://github.com/f110/isucon9-qualify/compare/master...f110:mbp?expand=1)
